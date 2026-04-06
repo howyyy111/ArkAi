@@ -1,0 +1,29 @@
+# OS
+.DS_Store
+
+# Python Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Environment Variables
+.env
+.env.*
+
+# Secrets & Authentication (CRITICAL: Do not commit these)
+credentials.json
+token.json
+user_google_tokens/
+
+# Local Databases & State
+learning_agent.db
+*.sqlite
+*.sqlite3
+*.db
+
+# Google ADK Dev State
+.adk/
