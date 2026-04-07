@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ARKAIS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/vs2015.min.css"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Adaptive learning assistant</p>
+          <h1>ARKAIS</h1>
+        </div>
+        <span class="status-pill">Connected to local agent API</span>
+      </header>
+
+      <main>
+        <section class="panel chat">
+          <div class="chat-header">
+            <div>
+              <p class="section-label">Session</p>
+              <h2>Study console</h2>
+            </div>
+            <div class="header-actions">
+              <button id="change-gmail-button" class="ghost-button" type="button">Change Gmail</button>
+              <button id="seed-button" class="ghost-button" type="button">Use example</button>
+            </div>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message agent">
+              <p class="message-role">ARKAIS</p>
+              <p>Send a message to start a lesson, ask a question, or build a roadmap.</p>
+            </article>
+          </div>
+
+          <form id="chat-form" class="composer">
+            <textarea
+              id="prompt"
+              name="prompt"
+              rows="3"
+              placeholder="Example: Teach me Python loops in 15 minutes with one exercise."
+            ></textarea>
+            <button id="submit-button" class="primary-button" type="submit">Send to agent</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <div id="username-modal" class="modal-backdrop" aria-hidden="true">
+      <div class="modal-card">
+        <p class="section-label">Profile</p>
+        <h2 class="modal-title">Enter your Gmail</h2>
+        <p class="modal-text">
+          This Gmail will identify you in chat and will be used for Google Docs, Calendar, and
+          Tasks authorization.
+        </p>
+        <form id="username-form" class="modal-form">
+          <input
+            id="username-input"
+            name="username"
+            type="email"
+            maxlength="120"
+            placeholder="you@gmail.com"
+            autocomplete="email"
+          />
+          <button id="username-submit" class="primary-button" type="submit">Continue</button>
+        </form>
+      </div>
+    </div>
+
+    <script src="./script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  </body>
+</html>

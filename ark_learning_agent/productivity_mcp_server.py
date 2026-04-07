@@ -122,7 +122,7 @@ def _load_google_credentials_from_disk(user_id: str):
     path = _user_google_token_path(user_id)
     if path.is_file():
         return Credentials.from_authorized_user_file(str(path), SCOPES)
-    if TOKEN_PATH.is_file():
+    if os.environ.get("ALLOW_LEGACY_SHARED_TOKEN") == "1" and TOKEN_PATH.is_file():
         return Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     return None
 
