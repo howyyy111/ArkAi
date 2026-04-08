@@ -39,11 +39,69 @@ productivity_mcp_toolset = McpToolset(
     ],
 )
 
+TOOL_EXECUTION_RULES = """
+        Tool execution rules:
+        - When a tool is needed, execute the tool directly.
+        - Never write tool calls as Python code.
+        - Never output or simulate tool calls such as:
+          - print(default_api.save_google_doc_note(...))
+          - save_google_doc_note(...)
+          - default_api.any_tool(...)
+        - Never wrap tool calls in code blocks, print(), pseudo-code, markdown examples, or plain text.
+        - Do not narrate the tool call.
+        - Do not show the tool arguments to the user.
+        - Do not display internal function syntax in the response.
+
+        Strict tool invocation rule:
+        - When actually calling a tool, the tool call must be the only action being produced for that step.
+        - Do not combine a real tool call with extra explanatory text in the same tool step.
+        - Do not mix a tool call with a fake displayed function call.
+        - Never show the user the literal tool invocation.
+
+        Execution control rule:
+        - When the user asks to save something to Google Docs, first prepare the content mentally, then execute `save_google_doc_note` directly.
+        - Do not print the function call.
+        - Do not simulate the function call.
+        - Do not output the save command as text.
+        - Keep tool execution separate from normal chat formatting.
+
+        Saving workflow rule:
+        - Do not auto-save newly generated content unless the user clearly asked to save it.
+        - If the user asks to save content, execute the save tool directly once the needed info is available.
+        - If the user has not yet provided the needed Google email or user_id, ask for it briefly first.
+        - Do not retry a failed save by printing the tool call.
+
+        Google Docs save rules:
+        - If the user asks to save notes, a lesson, code, math content, or a roadmap, directly execute `save_google_doc_note`.
+        - Use:
+          - `user_id` for the user's confirmed Gmail or chosen user_id already used in the workflow
+          - `title` for a short, clean document title
+          - `note_text` for the readable document content
+          - `code_snippet` only if there is actual code that should be formatted
+          - `language` only when `code_snippet` is provided
+        - Keep `note_text` as readable structured text.
+        - Prefer simple readable text over heavy markdown when saving to Google Docs.
+        - Avoid excessive markdown symbols such as many ###, ---, or dense nested bullets in saved content.
+        - Do not stuff the whole document into a fake function call.
+
+        Code vs tool separation:
+        - Code examples belong in the chat response.
+        - Tool calls must be executed directly and never displayed.
+        - If the user asks for code, respond with formatted code normally.
+        - If the user asks to save that code, then execute the save tool directly using `code_snippet` when appropriate.
+
+        Tool failure safety:
+        - If a tool fails, do not retry by printing or simulating the tool call.
+        - Explain briefly that the action did not go through.
+        - Ask for the missing information if needed, or guide the user to retry.
+        - Never claim that a Google Doc, Google Task, or Google Calendar event was created unless the tool actually succeeded.
+"""
+
 teaching_agent = Agent(
     name="teaching_agent",
     model=MODEL,
     description="Teaches a short focused lesson and can store progress.",
-    instruction="""
+    instruction=TOOL_EXECUTION_RULES + """
         You are a teaching sub-agent.
 
         Your job:
@@ -201,7 +259,7 @@ roadmap_agent = Agent(
     name="roadmap_agent",
     model=MODEL,
     description="Creates structured study roadmaps and can store learner profile.",
-    instruction="""
+    instruction=TOOL_EXECUTION_RULES + """
         You are a roadmap planning sub-agent.
 
         Your job:
@@ -353,7 +411,7 @@ root_agent = Agent(
     name="adaptive_learning_agent",
     model=MODEL,
     description="A multi-agent adaptive AI tutor and productivity assistant.",
-    instruction="""
+    instruction=TOOL_EXECUTION_RULES + """
         You are the coordinator agent.
 
         Your job is to:

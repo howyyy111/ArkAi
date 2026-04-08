@@ -7,6 +7,7 @@ import time
 import requests
 import json
 from pathlib import Path
+import zoneinfo
 from mcp.server.fastmcp import FastMCP
 
 from google.auth.transport.requests import Request
@@ -537,12 +538,26 @@ def list_notes(user_id: str) -> dict:
     return {"status": "success", "notes": notes}
 
 @mcp.tool()
-def get_current_time() -> dict:
+def get_current_time(timezone_name: str = None) -> dict:
     """Gets the user's current local time and timezone."""
-    now = datetime.datetime.now().astimezone()
+
+    try:
+        if timezone_name:
+            tz = zoneinfo.ZoneInfo(timezone_name)
+        else:
+            # Default fallback → Asia/Bangkok (Thailand)
+            tz = zoneinfo.ZoneInfo("Asia/Bangkok")
+
+        now = datetime.datetime.now(tz)
+
+    except Exception:
+        # Final fallback (safe default)
+        now = datetime.datetime.now(datetime.timezone.utc)
+
     tz_name = now.tzname()
     offset = now.strftime('%z')
     offset_formatted = f"{offset[:3]}:{offset[3:]}" if offset else ""
+
     return {
         "status": "success",
         "current_time_iso": now.isoformat(),

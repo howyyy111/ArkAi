@@ -40,7 +40,7 @@ def _extract_text(content: types.Content | None) -> str:
     return "\n".join(chunks).strip()
 
 
-async def _run_agent(*, user_id: str, session_id: str, message: str) -> str:
+async def _run_agent(user_id: str, session_id: str, message: str, user_timezone: str = "") -> str:
     if not session_service.get_session_sync(
         app_name=APP_NAME,
         user_id=user_id,
@@ -53,12 +53,14 @@ async def _run_agent(*, user_id: str, session_id: str, message: str) -> str:
         )
 
     final_reply = ""
+    timezone_info = f"\nUser's local timezone: {user_timezone}\n" if user_timezone else ""
     effective_message = (
         "The active signed-in user for this session is identified by this Gmail address: "
         f"{user_id}\n"
         "For any Google Docs, Google Calendar, or Google Tasks action, use this exact Gmail "
         "address as user_id. Do not ask again for Gmail unless the user explicitly wants to "
-        "change accounts.\n\n"
+        "change accounts.\n"
+        f"{timezone_info}\n"
         f"User message:\n{message}"
     )
     async for event in runner.run_async(
@@ -110,6 +112,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
         message = str(payload.get("message", "")).strip()
         session_id = str(payload.get("sessionId", "")).strip()
         user_id = str(payload.get("userId", "frontend-user")).strip() or "frontend-user"
+        user_timezone = str(payload.get("timezone", "")).strip()
 
         if not message:
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Missing message."})
@@ -125,6 +128,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                         user_id=user_id,
                         session_id=session_id,
                         message=message,
+                        user_timezone=user_timezone,
                     ),
                     timeout=float(
                         os.environ.get(

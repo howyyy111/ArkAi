@@ -264,6 +264,7 @@ chatForm.addEventListener("submit", (event) => {
     message: userPrompt,
     sessionId: getSessionId(),
     userId: username,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
 
   submitButton.disabled = true;
