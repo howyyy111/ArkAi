@@ -61,7 +61,7 @@ function ensureUsername() {
 }
 
 function extractLinks(text) {
-  const matches = text.match(/https?:\/\/[^\s`]+/g) || [];
+  const matches = text.match(/https?:\/\/[^\s`()\]]+/g) || [];
   return [...new Set(matches)];
 }
 
