@@ -3,14 +3,51 @@ const messages = document.getElementById("messages");
 const promptInput = document.getElementById("prompt");
 const seedButton = document.getElementById("seed-button");
 const changeGmailButton = document.getElementById("change-gmail-button");
+const newSessionButton = document.getElementById("new-session-button");
 const submitButton = document.getElementById("submit-button");
 const usernameModal = document.getElementById("username-modal");
 const usernameForm = document.getElementById("username-form");
 const usernameInput = document.getElementById("username-input");
 
-const sessionStorageKey = "arkais-session-id";
-const usernameStorageKey = "arkais-user-email";
+const sessionStorageKey = "arkai-session-id";
+const usernameStorageKey = "arkai-user-email";
+const historyStorageKeyPrefix = "arkai-history-";
 const requestTimeoutMs = 90000;
+
+function getHistory() {
+  const sid = getSessionId();
+  try {
+    return JSON.parse(window.localStorage.getItem(historyStorageKeyPrefix + sid)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistoryItem(role, body) {
+  const sid = getSessionId();
+  const hist = getHistory();
+  hist.push({ role, body });
+  window.localStorage.setItem(historyStorageKeyPrefix + sid, JSON.stringify(hist));
+}
+
+function clearSessionState() {
+  window.localStorage.removeItem(sessionStorageKey);
+  messages.innerHTML = `
+    <div class="empty-state">
+      Let's begin your Journey!
+    </div>
+  `;
+}
+
+function restoreSession() {
+  const hist = getHistory();
+  if (hist.length > 0) {
+    messages.innerHTML = "";
+    for (const msg of hist) {
+      appendMessage(msg.role, msg.body, true);
+    }
+  }
+}
 
 function getSessionId() {
   let sessionId = window.localStorage.getItem(sessionStorageKey);
@@ -60,125 +97,42 @@ function ensureUsername() {
   return "";
 }
 
-function extractLinks(text) {
-  const matches = text.match(/https?:\/\/[^\s`()\]]+/g) || [];
-  return [...new Set(matches)];
-}
-
-function stripLinks(text, links) {
-  let nextText = text;
-  for (const link of links) {
-    nextText = nextText.replaceAll(link, "").trim();
-  }
-  return nextText.replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function appendInlineCode(element, text) {
-  const parts = text.split(/(`[^`]+`)/g);
-
-  for (const part of parts) {
-    if (!part) {
-      continue;
-    }
-
-    if (part.startsWith("`") && part.endsWith("`")) {
-      const code = document.createElement("code");
-      code.textContent = part.slice(1, -1);
-      element.appendChild(code);
-      continue;
-    }
-
-    element.appendChild(document.createTextNode(part));
-  }
-}
-
-function linkLabel(url, index) {
-  if (url.includes("accounts.google.com") || url.includes("oauth")) {
-    return "Continue with Google";
-  }
-  return index === 0 ? "Open link" : `Open link ${index + 1}`;
-}
-
-function highlightCodeBlock(codeElement, language) {
-  if (!window.hljs) {
-    return;
-  }
-
-  if (language) {
-    codeElement.classList.add(`language-${language}`);
-  }
-
-  window.hljs.highlightElement(codeElement);
-}
-
 function buildMessageBody(body) {
   const container = document.createElement("div");
-  container.className = "message-body";
+  container.className = "message-body markdown-body";
 
-  const links = extractLinks(body);
-  const text = stripLinks(body, links);
-  const tokens = text.split(/```([\w+-]*)\n?([\s\S]*?)```/g);
+  if (window.marked) {
+    window.marked.setOptions({ breaks: true, gfm: true });
+    container.innerHTML = window.marked.parse(body);
 
-  if (text) {
-    for (let index = 0; index < tokens.length; index += 1) {
-      if (index % 3 === 2) {
-        const codeText = tokens[index].trim();
-        if (!codeText) {
-          continue;
-        }
-
-        const language = (tokens[index - 1] || "").trim();
-        const block = document.createElement("div");
-        block.className = "code-block";
-
-        if (language) {
+    if (window.hljs) {
+      container.querySelectorAll("pre code").forEach((element) => {
+        const langClass = Array.from(element.classList).find(c => c && c.startsWith('language-'));
+        if (langClass) {
+          const lang = langClass.replace('language-', '');
           const label = document.createElement("div");
           label.className = "code-language";
-          label.textContent = language;
+          label.textContent = lang;
+
+          const pre = element.parentElement;
+          const block = document.createElement("div");
+          block.className = "code-block";
+
+          pre.parentNode.insertBefore(block, pre);
           block.appendChild(label);
+          block.appendChild(pre);
         }
-
-        const pre = document.createElement("pre");
-        const code = document.createElement("code");
-        code.textContent = codeText;
-        highlightCodeBlock(code, language);
-        pre.appendChild(code);
-        block.appendChild(pre);
-        container.appendChild(block);
-        continue;
-      }
-
-      if (index % 3 !== 0) {
-        continue;
-      }
-
-      for (const paragraph of tokens[index].split(/\n{2,}/)) {
-        const normalized = paragraph.trim();
-        if (!normalized) {
-          continue;
-        }
-
-        const p = document.createElement("p");
-        p.className = "message-paragraph";
-        appendInlineCode(p, normalized);
-        container.appendChild(p);
-      }
+        window.hljs.highlightElement(element);
+      });
     }
-  }
 
-  for (const [index, url] of links.entries()) {
-    const anchor = document.createElement("a");
-    anchor.className = "message-link";
-    anchor.href = url;
-    anchor.target = "_blank";
-    anchor.rel = "noreferrer";
-    anchor.textContent = linkLabel(url, index);
-    container.appendChild(anchor);
-  }
-
-  if (!text && links.length === 0) {
+    container.querySelectorAll("a").forEach((anchor) => {
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.className = "message-link";
+    });
+  } else {
     const p = document.createElement("p");
-    p.className = "message-paragraph";
     p.textContent = body;
     container.appendChild(p);
   }
@@ -186,23 +140,38 @@ function buildMessageBody(body) {
   return container;
 }
 
-function appendMessage(role, body) {
+function appendMessage(role, body, skipSave = false) {
+  const emptyState = messages.querySelector(".empty-state");
+  if (emptyState) {
+    emptyState.remove();
+  }
+
   const article = document.createElement("article");
   article.className = `message ${role}`;
 
   const roleLabel = document.createElement("p");
   roleLabel.className = "message-role";
-  roleLabel.textContent = role === "user" ? getUsername() || "You" : "ARKAIS";
+  roleLabel.textContent = role === "user" ? getUsername() || "You" : "ARKAI";
 
   article.appendChild(roleLabel);
   article.appendChild(buildMessageBody(body));
   messages.appendChild(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
+
+  if (!skipSave) {
+    saveHistoryItem(role, body);
+  }
 }
 
 seedButton.addEventListener("click", () => {
   promptInput.value = "Teach me loops with one example and one exercise.";
 });
+
+if (newSessionButton) {
+  newSessionButton.addEventListener("click", () => {
+    clearSessionState();
+  });
+}
 
 changeGmailButton.addEventListener("click", () => {
   openUsernameModal(true);
@@ -264,11 +233,10 @@ chatForm.addEventListener("submit", (event) => {
     message: userPrompt,
     sessionId: getSessionId(),
     userId: username,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
 
   submitButton.disabled = true;
-  submitButton.textContent = "Sending...";
+  submitButton.classList.add("loading");
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -298,8 +266,10 @@ chatForm.addEventListener("submit", (event) => {
     .finally(() => {
       window.clearTimeout(timeoutId);
       submitButton.disabled = false;
-      submitButton.textContent = "Send to agent";
+      submitButton.classList.remove("loading");
     });
 });
 
 ensureUsername();
+restoreSession();
+
