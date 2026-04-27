@@ -10,7 +10,17 @@ ARKAIS is an intelligent, AI-driven learning and teaching assistant built levera
     *   **Google Docs:** Automatically saves thorough summaries and code examples directly to your Drive.
     *   **Google Calendar:** Schedules follow-up lessons, checks your timezone, and adds learning sessions to your calendar.
     *   **Google Tasks:** Adds homework and study tasks.
-*   **Persistent Progress Tracking:** Stores learner profiles, learning patterns, and historical progress locally (SQLite) or in the cloud (Firebase Firestore).
+*   **Persistent Progress Tracking:** Stores learner profiles, learning patterns, learner state, notes, and historical progress in Firebase Firestore, with SQLite fallback for local-only development.
+*   **Firebase Auth Ready Frontend:** Supports Google Sign-In on the web UI and uses the same learner identity across chat, persistence, and Google Workspace actions.
+*   **Diagnostics And Mastery Engine:** Generates short diagnostics, scores quiz attempts, tracks concept weaknesses, and updates topic mastery over time.
+*   **Living Roadmaps:** Generates milestone-based study plans with checkpoints, tracks session completion, and automatically switches into recovery mode when the learner falls behind.
+*   **Grounded Materials Library:** Supports uploading notes, code/text files, and study images for grounded tutoring with source-aware answers.
+*   **Voice And Multimodal Tutoring:** Adds browser voice input/output for hands-free tutoring and image-aware study help when Gemini multimodal support is available.
+*   **Evaluation And Intervention Agents:** Adds dedicated progress-review, recovery-planning, and reporting flows on top of the tutor and roadmap agents.
+*   **Google Workflow Actions:** Can save weekly reports to Google Docs and create Google Tasks directly from the learner's active roadmap.
+*   **Dashboard UX:** Surfaces mastery, roadmap momentum, grounded materials, intervention risk, and weekly insights in a single learner cockpit.
+*   **Architecture Readiness View:** Exposes Firebase/Auth/Vertex/OAuth/runtime readiness and lightweight in-app metrics for demo and deployment confidence.
+*   **Judge Demo Kit:** Includes demo personas, measurable learner metrics, a polished end-to-end demo script, and a concise pitch inside the product UI.
 
 ## 🏗️ Architecture
 
@@ -47,7 +57,22 @@ Create or update the `.env` file in this directory based on your Google Cloud en
 GOOGLE_GENAI_USE_VERTEXAI=1
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_API_KEY=your-firebase-web-api-key
+FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+FIREBASE_APP_ID=your-firebase-web-app-id
+# Optional:
+# FIREBASE_MESSAGING_SENDER_ID=...
+# FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 ```
+
+If the Firebase web variables are not set, the frontend falls back to a Gmail prompt for local demos.
+If you want to force local persistence during development, set `ARKAIS_FORCE_SQLITE=1`.
+
+Supported local material upload types in the current prototype:
+
+*   Text and notes: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.css`, `.js`, `.py`
+*   Images for multimodal tutoring: `.png`, `.jpg`, `.jpeg`, `.webp`
 
 ### 2. Configure Google OAuth Credentials
 
@@ -98,8 +123,17 @@ The frontend server uses port `4173` by default so it does not clash with a serv
 This frontend currently provides:
 
 *   A minimal ARKAIS chat interface
-*   A username prompt stored in the browser for chat identity
+*   Firebase Auth based Google Sign-In when configured, with Gmail fallback for local demos
 *   A study console that sends requests to the local Python ADK agent via `/api/chat`
+*   A learner-state strip showing the current topic, activity count, and next recommended action
+*   A diagnostic panel that generates a short assessment, scores it, and updates the mastery board
+*   A roadmap panel that creates milestone-based plans, tracks session progress, and triggers recovery rebuilds
+*   A materials panel for uploads, grounded Q&A, and source selection
+*   Browser voice controls for dictation and spoken tutor replies
+*   An insights panel for intervention risk, evaluation coverage, and weekly report generation
+*   A dashboard overview with key learner metrics and quick section navigation
+*   An architecture panel with Google-native readiness and runtime metrics
+*   A judge demo kit panel with personas, pitch copy, demo metrics, and presentation steps
 
 It serves the static files and API from the same local server, so no extra frontend tooling is required.
 
@@ -168,6 +202,66 @@ If you do not need Google Docs / Calendar / Tasks yet, you can deploy without it
 ### Notes
 
 *   Cloud Run requires the service to listen on the `PORT` environment variable. [`frontend_server.py`](./frontend_server.py) now supports that.
-*   Source deploy with `gcloud run deploy --source .` is supported by Google Cloud Run and uses Cloud Build/buildpacks automatically. See Google’s official docs: [Deploy services from source code](https://cloud.google.com/run/docs/deploying-source-code), [Python buildpack entrypoints](https://cloud.google.com/docs/buildpacks/python), and [Procfile support](https://docs.cloud.google.com/docs/buildpacks/about-procfile).
+*   This repo now includes a top-level [`Dockerfile`](./Dockerfile) so Cloud Run deploys the correct app entrypoint: `python3 frontend_server.py`.
+*   Without that explicit container entrypoint, Cloud Run source deploy may auto-detect and start the Google ADK FastAPI runtime instead of the frontend server.
+
+## 🔧 One-Command GCP Deploy
+
+A repo-level deploy script is included at [`scripts/deploy_gcp.sh`](./scripts/deploy_gcp.sh). It will:
+
+*   enable the required Google Cloud APIs
+*   deploy the OAuth callback as its own Cloud Run service
+*   deploy `ark_learning_agent` as its own Cloud Run service
+*   capture the callback URL and agent URL automatically
+*   deploy the frontend server to Cloud Run with matching `AUTH_CALLBACK_URL` and `ARKAIS_AGENT_API_URL`
+
+### 1. Prepare the deploy env file
+
+```bash
+cp deploy/.deploy.env.example deploy/.deploy.env
+```
+
+Edit [`deploy/.deploy.env`](./deploy/.deploy.env) with your real project and Firebase values.
+
+### 2. Make sure OAuth credentials are present
+
+These files should exist before deploying:
+
+*   [`ark_learning_agent/credentials.json`](./ark_learning_agent/credentials.json)
+*   [`auth_function/credentials.json`](./auth_function/credentials.json)
+
+### 3. Run the full deploy
+
+```bash
+bash scripts/deploy_gcp.sh all
+```
+
+### 4. Deploy pieces separately if needed
+
+Deploy only the OAuth callback:
+
+```bash
+bash scripts/deploy_gcp.sh auth
+```
+
+Deploy only the standalone agent:
+
+```bash
+bash scripts/deploy_gcp.sh agent
+```
+
+Deploy only the frontend service:
+
+```bash
+bash scripts/deploy_gcp.sh frontend
+```
+
+The script prints the auth callback URL, standalone agent URL, and frontend URL when deployment succeeds.
+
+If your existing Cloud Run auth callback service is named `auth-function`, set:
+
+```bash
+AUTH_SERVICE_NAME=auth-function
+```
 
 *Happy Learning with ARKAIS!*

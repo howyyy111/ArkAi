@@ -7,10 +7,19 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
 from .tools import (
-    save_learner_profile,
+    build_or_update_roadmap,
+    create_assessment,
+    generate_weekly_report,
+    get_evaluation_snapshot,
+    get_intervention_plan,
     get_learner_profile,
+    get_learner_state,
+    get_mastery_snapshot,
+    get_roadmap,
     save_learning_progress,
     get_learning_history,
+    save_learner_profile,
+    update_roadmap_session,
 )
 
 MODEL = "gemini-2.5-flash"
@@ -36,6 +45,8 @@ productivity_mcp_toolset = McpToolset(
         "create_calendar_event",
         "save_google_doc_note",
         "get_current_time",
+        "create_roadmap_tasks",
+        "save_weekly_report_doc",
     ],
 )
 
@@ -251,6 +262,10 @@ teaching_agent = Agent(
     tools=[
         save_learning_progress,
         get_learning_history,
+        get_learner_state,
+        get_mastery_snapshot,
+        create_assessment,
+        get_roadmap,
         productivity_mcp_toolset,
     ],
 )
@@ -403,6 +418,106 @@ roadmap_agent = Agent(
     tools=[
         save_learner_profile,
         get_learner_profile,
+        get_learner_state,
+        get_mastery_snapshot,
+        build_or_update_roadmap,
+        get_roadmap,
+        update_roadmap_session,
+        productivity_mcp_toolset,
+    ],
+)
+
+evaluator_agent = Agent(
+    name="evaluator_agent",
+    model=MODEL,
+    description="Analyzes assessments, roadmap health, and learner evaluation signals.",
+    instruction=TOOL_EXECUTION_RULES + """
+        You are an evaluation sub-agent.
+
+        Your job:
+        - Review the learner's assessment signals, mastery, roadmap health, and recent progress
+        - Explain what is going well, what is risky, and what should happen next
+        - Prefer concrete observations over vague encouragement
+
+        Output preferences:
+        - Keep the result structured and concise
+        - Include:
+          - current status
+          - strongest signals
+          - biggest risks
+          - next best action
+        - If evaluation coverage is weak, say so clearly
+
+        Tool usage:
+        - Use learner-state tools to inspect mastery, intervention, roadmap, and evaluation coverage
+        - When the user asks for a report, diagnosis, evaluation, review of progress, or study health, handle it directly
+    """,
+    tools=[
+        get_learner_state,
+        get_mastery_snapshot,
+        get_roadmap,
+        get_intervention_plan,
+        get_evaluation_snapshot,
+        generate_weekly_report,
+    ],
+)
+
+intervention_agent = Agent(
+    name="intervention_agent",
+    model=MODEL,
+    description="Creates recovery plans and intervention suggestions when a learner is falling behind.",
+    instruction=TOOL_EXECUTION_RULES + """
+        You are an intervention sub-agent.
+
+        Your job:
+        - Detect when the learner is at risk of falling behind
+        - Recommend a smaller, sharper recovery plan
+        - Keep the user calm and focused
+
+        Intervention rules:
+        - If missed sessions or low mastery create real risk, say so directly but kindly
+        - Prefer a short, realistic recovery plan over an ideal plan
+        - If useful, rebuild the roadmap in recovery mode
+        - Suggest Google Tasks or Google Calendar only when they would clearly help
+
+        Output preferences:
+        - Explain:
+          - what triggered the intervention
+          - what to do in the next 24 to 72 hours
+          - whether a roadmap rebuild is recommended
+    """,
+    tools=[
+        get_learner_state,
+        get_intervention_plan,
+        build_or_update_roadmap,
+        get_roadmap,
+        update_roadmap_session,
+        productivity_mcp_toolset,
+    ],
+)
+
+report_agent = Agent(
+    name="report_agent",
+    model=MODEL,
+    description="Generates progress summaries and can save them to Google Docs.",
+    instruction=TOOL_EXECUTION_RULES + """
+        You are a reporting sub-agent.
+
+        Your job:
+        - Generate clear study summaries and weekly reports
+        - Keep reports useful to the learner, not overly formal
+        - When the user asks to save a report, use the Google Docs save workflow
+
+        Output preferences:
+        - Include wins, risks, next focus, and recommended actions
+        - Keep reports scannable and concrete
+        - If data is missing, note the gap instead of pretending
+    """,
+    tools=[
+        generate_weekly_report,
+        get_evaluation_snapshot,
+        get_intervention_plan,
+        get_learner_state,
         productivity_mcp_toolset,
     ],
 )
@@ -448,6 +563,9 @@ root_agent = Agent(
         Intent handling:
         - Teaching intent includes requests like "teach", "learn now", "explain"
         - Roadmap intent includes requests like "plan", "roadmap", "study plan"
+        - Evaluation intent includes requests like "review my progress", "how am I doing", "evaluate", "status"
+        - Intervention intent includes requests like "catch me up", "I missed sessions", "recovery plan"
+        - Report intent includes requests like "weekly report", "summary report", "save my report"
         - Mixed intent means the user asks for both teaching and planning
         - Do NOT force the user to choose one if they clearly want both
 
@@ -500,6 +618,9 @@ root_agent = Agent(
         Delegation:
         - Route lesson-focused requests to teaching_agent
         - Route roadmap-focused requests to roadmap_agent
+        - Route progress reviews and evaluation requests to evaluator_agent
+        - Route recovery, catch-up, and falling-behind requests to intervention_agent
+        - Route report-generation requests to report_agent
         - For mixed requests, combine or sequence intelligently without creating friction
 
         Mixed request output rules:
@@ -579,5 +700,5 @@ root_agent = Agent(
         - If required information is missing, ask for it before taking the action
         - Do not say "starting tomorrow" or any other scheduled date unless that date was provided by the user or explicitly confirmed
 """,
-    sub_agents=[teaching_agent, roadmap_agent],
+    sub_agents=[teaching_agent, roadmap_agent, evaluator_agent, intervention_agent, report_agent],
 )

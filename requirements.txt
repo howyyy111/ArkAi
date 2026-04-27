@@ -7,3 +7,4 @@ google-auth-oauthlib
 Pygments
 firebase-admin
 requests
+Pillow

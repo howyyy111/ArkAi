@@ -1,10 +1,6 @@
-import sqlite3
 import os
 from dotenv import load_dotenv
 import datetime
-import threading
-import time
-import requests
 import json
 from pathlib import Path
 import zoneinfo
@@ -17,6 +13,16 @@ from googleapiclient.discovery import build
 
 import firebase_admin
 from firebase_admin import firestore
+
+try:
+    from .learner_state import (
+        generate_weekly_report,
+        get_roadmap,
+        list_study_notes,
+        save_study_note,
+    )
+except ImportError:
+    from learner_state import generate_weekly_report, get_roadmap, list_study_notes, save_study_note
 
 mcp = FastMCP("productivity-tools")
 
@@ -47,7 +53,6 @@ from pygments import lex
 from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.token import Token
 
-DB_PATH = BASE_DIR / "learning_agent.db"
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
 TOKEN_PATH = BASE_DIR / "token.json"
 USER_GOOGLE_TOKENS_DIR = BASE_DIR / "user_google_tokens"
@@ -94,23 +99,6 @@ def _cloud_oauth_redirect_uri() -> str:
     if from_file:
         return from_file
     return ""
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS study_notes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        topic TEXT,
-        note TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    conn.commit()
-    conn.close()
 
 def _safe_user_id_for_path(user_id: str) -> str:
     return "".join(c if c.isalnum() or c in "@._-" else "_" for c in str(user_id).strip())[:200]
@@ -441,6 +429,38 @@ def create_study_task(user_id: str, task_title: str, due_day: str = None) -> dic
     }
 
 @mcp.tool()
+def create_roadmap_tasks(user_id: str, include_due_dates: bool = False) -> dict:
+    """Creates Google Tasks from the learner's active roadmap."""
+    roadmap_result = get_roadmap(user_id)
+    if roadmap_result.get("status") != "success":
+        return roadmap_result
+
+    created = []
+    for phase in roadmap_result["roadmap"].get("phases", []):
+        for session in phase.get("sessions", []):
+            if session.get("status") == "completed":
+                continue
+            due_day = session.get("due_date") if include_due_dates else None
+            task_result = create_study_task(
+                user_id=user_id,
+                task_title=f"{phase.get('title')}: {session.get('title')}",
+                due_day=due_day,
+            )
+            if task_result.get("status") == "success":
+                created.append(
+                    {
+                        "task_title": task_result.get("task_title"),
+                        "task_id": task_result.get("task_id"),
+                    }
+                )
+
+    return {
+        "status": "success",
+        "created_tasks": created,
+        "message": f"Created {len(created)} roadmap task(s) in Google Tasks.",
+    }
+
+@mcp.tool()
 def list_study_tasks(user_id: str) -> dict:
     creds = get_google_credentials(user_id)
     if isinstance(creds, dict):
@@ -491,51 +511,25 @@ def create_calendar_event(user_id: str, event_title: str, start_time_iso: str, e
     }
 
 @mcp.tool()
+def save_weekly_report_doc(user_id: str, title: str = "") -> dict:
+    """Generates the learner's weekly report and saves it to Google Docs."""
+    report = generate_weekly_report(user_id)
+    if report.get("status") != "success":
+        return report
+    report_title = title or report.get("title") or "ARKAIS Weekly Learning Report"
+    return save_google_doc_note(
+        user_id=user_id,
+        title=report_title,
+        note_text=report.get("note_text", ""),
+    )
+
+@mcp.tool()
 def save_note(user_id: str, topic: str, note: str) -> dict:
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-    INSERT INTO study_notes (user_id, topic, note)
-    VALUES (?, ?, ?)
-    """, (user_id, topic, note))
-
-    conn.commit()
-    conn.close()
-
-    return {
-        "status": "success",
-        "message": f"Note saved for {user_id}",
-        "topic": topic
-    }
+    return save_study_note(user_id=user_id, topic=topic, note=note)
 
 @mcp.tool()
 def list_notes(user_id: str) -> dict:
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT topic, note, created_at
-    FROM study_notes
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    LIMIT 10
-    """, (user_id,))
-
-    rows = cur.fetchall()
-    conn.close()
-
-    notes = []
-    for row in rows:
-        notes.append({
-            "topic": row[0],
-            "note": row[1],
-            "created_at": row[2]
-        })
-
-    return {"status": "success", "notes": notes}
+    return list_study_notes(user_id=user_id, limit=10)
 
 @mcp.tool()
 def get_current_time(timezone_name: str = None) -> dict:
