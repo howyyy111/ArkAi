@@ -64,7 +64,7 @@
       </section>
 
       <section class="focus-frame panel">
-        <aside class="focus-rail" aria-label="Workspace sections">
+        <section class="focus-rail" aria-label="Workspace sections">
           <div class="focus-rail-copy">
             <p class="section-label">Workspace</p>
             <h3>Choose one focus area.</h3>
@@ -88,7 +88,7 @@
               <span>Review progress, reports, and secondary tools.</span>
             </button>
           </div>
-        </aside>
+        </section>
 
         <div class="focus-content">
           <section class="focus-view is-active" data-view="tutor">
@@ -102,67 +102,59 @@
               </p>
             </section>
 
-            <div class="tutor-layout">
-              <section id="study-console" class="chat-panel panel-lite">
-                <div class="chat-panel-header">
-                  <div>
-                    <p class="section-label">Tutor chat</p>
-                    <h3>Ask, practice, adapt</h3>
-                  </div>
-                  <p class="state-summary">Use chat as the main starting point when the learner is unsure where to begin.</p>
-                </div>
+            <section class="content-card panel-lite helper-card">
+              <div class="helper-grid">
+                <article class="helper-item">
+                  <strong>Start here</strong>
+                  <p>Use Tutor when the learner needs help right away.</p>
+                </article>
+                <article class="helper-item">
+                  <strong>Then open Plan</strong>
+                  <p>Run a diagnostic after the topic and goal are clear.</p>
+                </article>
+                <article class="helper-item">
+                  <strong>Use Materials later</strong>
+                  <p>Keep uploads separate so the main flow stays clean.</p>
+                </article>
+              </div>
+            </section>
 
-                <div id="messages" class="messages" aria-live="polite">
-                  <div class="empty-state">
-                    Let's begin your journey.
-                  </div>
+            <section id="study-console" class="chat-panel panel-lite">
+              <div class="chat-panel-header">
+                <div>
+                  <p class="section-label">Tutor chat</p>
+                  <h3>Ask, practice, adapt</h3>
                 </div>
+                <p class="state-summary">Use chat as the main starting point when the learner is unsure where to begin.</p>
+              </div>
 
-                <form id="chat-form" class="composer">
-                  <div class="composer-inner">
-                    <textarea id="prompt" name="prompt" rows="1"
-                      placeholder="Example: Teach me Python loops in 15 minutes with one exercise."></textarea>
-                    <button id="submit-button" class="primary-button" type="submit">
-                      <span class="button-text">Send</span>
-                      <span class="button-loader" aria-hidden="true"></span>
-                    </button>
-                  </div>
-                </form>
+              <div id="messages" class="messages" aria-live="polite">
+                <div class="empty-state">
+                  Let's begin your journey.
+                </div>
+              </div>
 
-                <div class="voice-strip">
-                  <button id="voice-input-button" class="ghost-button" type="button">Start voice input</button>
-                  <button id="voice-reply-button" class="ghost-button" type="button">Speak last reply</button>
-                  <label class="voice-toggle">
-                    <input id="voice-autospeak" type="checkbox" />
-                    <span>Auto-speak tutor replies</span>
-                  </label>
-                  <span id="voice-status" class="state-summary">Voice mode idle.</span>
+              <form id="chat-form" class="composer">
+                <div class="composer-inner">
+                  <textarea id="prompt" name="prompt" rows="1"
+                    placeholder="Example: Teach me Python loops in 15 minutes with one exercise."></textarea>
+                  <button id="submit-button" class="primary-button" type="submit">
+                    <span class="button-text">Send</span>
+                    <span class="button-loader" aria-hidden="true"></span>
+                  </button>
                 </div>
-              </section>
+              </form>
 
-              <section class="content-card panel-lite compact-card">
-                <div class="section-head">
-                  <div>
-                    <p class="section-label">Best next step</p>
-                    <h3>Keep the learner moving</h3>
-                  </div>
-                </div>
-                <div class="info-list">
-                  <article class="info-row">
-                    <strong>Start here</strong>
-                    <p>Use Tutor when the learner wants an explanation or needs help right away.</p>
-                  </article>
-                  <article class="info-row">
-                    <strong>Then open Plan</strong>
-                    <p>Run a diagnostic and build a roadmap once the topic and goal are clear.</p>
-                  </article>
-                  <article class="info-row">
-                    <strong>Use Materials only when needed</strong>
-                    <p>Keep grounding separate so uploaded files do not compete with the main flow.</p>
-                  </article>
-                </div>
-              </section>
-            </div>
+              <div class="voice-strip">
+                <button id="voice-input-button" class="ghost-button" type="button">Start voice input</button>
+                <button id="voice-reply-button" class="ghost-button" type="button">Speak last reply</button>
+                <label class="voice-toggle">
+                  <input id="voice-autospeak" type="checkbox" />
+                  <span>Auto-speak tutor replies</span>
+                </label>
+                <span id="voice-status" class="state-summary">Voice mode idle.</span>
+              </div>
+            </section>
           </section>
 
           <section class="focus-view" data-view="plan">

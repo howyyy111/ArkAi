@@ -167,16 +167,12 @@ textarea {
 
 .focus-frame {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
   gap: 22px;
-  align-items: start;
 }
 
 .focus-rail {
-  position: sticky;
-  top: 20px;
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .focus-rail-copy {
@@ -186,15 +182,16 @@ textarea {
 
 .focus-tabs {
   display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
 .focus-tab {
   width: 100%;
-  padding: 16px;
+  padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.64);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -202,21 +199,21 @@ textarea {
 }
 
 .focus-tab strong,
-.info-row strong {
+.helper-item strong {
   display: block;
   margin-bottom: 4px;
 }
 
 .focus-tab span,
-.info-row p {
+.helper-item p {
   color: var(--muted);
   line-height: 1.55;
 }
 
 .focus-tab.is-active {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.9);
   border-color: rgba(28, 28, 28, 0.18);
-  box-shadow: 0 14px 30px rgba(18, 18, 18, 0.06);
+  box-shadow: 0 10px 24px rgba(18, 18, 18, 0.05);
 }
 
 .focus-tab:hover {
@@ -225,8 +222,7 @@ textarea {
 
 .focus-content,
 .focus-view,
-.stack-grid,
-.tutor-layout {
+.stack-grid {
   display: grid;
   gap: 20px;
 }
@@ -239,12 +235,7 @@ textarea {
   display: grid;
 }
 
-.tutor-layout {
-  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.6fr);
-  align-items: start;
-}
-
-.compact-card,
+.helper-card,
 .chat-panel,
 .state-strip,
 .content-card,
@@ -255,7 +246,7 @@ textarea {
 }
 
 .chat-panel-header,
-.info-list,
+.helper-grid,
 .mastery-board,
 .mastery-topics,
 .diagnostic-form,
@@ -395,11 +386,15 @@ textarea:focus {
 .roadmap-phase,
 .material-card,
 .roadmap-session,
-.info-row {
+.helper-item {
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.helper-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .diagnostic-question h5,
@@ -463,7 +458,7 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 420px;
+  min-height: 440px;
   max-height: 62vh;
   overflow-y: auto;
   padding-right: 6px;
@@ -747,14 +742,9 @@ textarea:focus {
 }
 
 @media (max-width: 1120px) {
-  .focus-frame,
-  .tutor-layout,
-  .secondary-grid {
+  .secondary-grid,
+  .helper-grid {
     grid-template-columns: 1fr;
-  }
-
-  .focus-rail {
-    position: static;
   }
 
   .messages {
@@ -796,7 +786,7 @@ textarea:focus {
   .hero,
   .focus-frame,
   .chat-panel,
-  .compact-card,
+  .helper-card,
   .state-strip,
   .content-card,
   .nested-card {
