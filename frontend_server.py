@@ -18,6 +18,9 @@ from firebase_admin import auth as firebase_auth
 from ark_learning_agent.demo_assets import get_demo_kit
 from ark_learning_agent.materials import (
     build_material_context,
+    create_mock_test_from_materials,
+    delete_all_learning_materials,
+    delete_learning_material,
     list_learning_materials,
     save_learning_material,
     tutor_from_materials,
@@ -26,6 +29,8 @@ from ark_learning_agent.agent import root_agent
 from ark_learning_agent.learner_state import (
     build_or_update_roadmap,
     create_assessment,
+    delete_all_learning_history,
+    delete_learning_history_item,
     describe_learner_state,
     generate_weekly_report,
     get_evaluation_snapshot,
@@ -36,6 +41,7 @@ from ark_learning_agent.learner_state import (
     submit_assessment,
     update_roadmap_session,
 )
+from ark_learning_agent.productivity_mcp_server import save_weekly_report_doc
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -60,6 +66,7 @@ app_metrics = {
     "materials_uploaded": 0,
     "materials_tutored": 0,
     "reports_generated": 0,
+    "reports_saved_to_docs": 0,
 }
 
 
@@ -443,7 +450,13 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             "/api/roadmap/session/update",
             "/api/materials/upload",
             "/api/materials/tutor",
+            "/api/materials/mock-test",
+            "/api/materials/delete",
+            "/api/materials/delete-all",
+            "/api/history/delete",
+            "/api/history/delete-all",
             "/api/report/generate",
+            "/api/report/save-google-doc",
         }:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
@@ -542,10 +555,68 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             self._write_json(status, result)
             return
 
+        if self.path == "/api/materials/mock-test":
+            result = create_mock_test_from_materials(
+                user_id=user_id,
+                material_ids=[str(item) for item in (payload.get("materialIds") or []) if str(item).strip()],
+                topic=str(payload.get("topic", "")).strip(),
+                level=str(payload.get("level", "beginner")).strip() or "beginner",
+                goal=str(payload.get("goal", "")).strip(),
+                question_count=payload.get("questionCount", 5),
+                structure=str(payload.get("structure", "")).strip(),
+                sample_style=str(payload.get("sampleStyle", "")).strip(),
+            )
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/materials/delete":
+            result = delete_learning_material(
+                user_id=user_id,
+                material_id=str(payload.get("materialId", "")).strip(),
+            )
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/materials/delete-all":
+            result = delete_all_learning_materials(user_id=user_id)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/history/delete":
+            result = delete_learning_history_item(
+                user_id=user_id,
+                record_id=str(payload.get("recordId", "")).strip(),
+            )
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/history/delete-all":
+            result = delete_all_learning_history(user_id=user_id)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
         if self.path == "/api/report/generate":
             app_metrics["reports_generated"] += 1
             result = generate_weekly_report(user_id)
             status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/report/save-google-doc":
+            app_metrics["reports_saved_to_docs"] += 1
+            result = save_weekly_report_doc(
+                user_id=user_id,
+                title=str(payload.get("title", "")).strip(),
+            )
+            if result.get("status") in {"success", "auth_required"}:
+                status = HTTPStatus.OK
+            else:
+                status = HTTPStatus.BAD_REQUEST
             self._write_json(status, result)
             return
 

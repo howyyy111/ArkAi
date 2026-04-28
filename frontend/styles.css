@@ -568,6 +568,61 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.materials-flow,
+.materials-step,
+.materials-question {
+  display: grid;
+  gap: 14px;
+}
+
+.materials-flow {
+  gap: 16px;
+}
+
+.materials-step {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.materials-step-head h4 {
+  margin: 0;
+  letter-spacing: -0.03em;
+}
+
+.materials-step-head .section-label {
+  margin-bottom: 4px;
+}
+
+.materials-step .field-note {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+}
+
+.materials-group,
+.materials-history {
+  display: grid;
+  gap: 12px;
+}
+
+.materials-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.materials-library .material-card header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.material-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .history-toggle,
 .history-list {
   width: 100%;
@@ -580,26 +635,36 @@ textarea:focus {
 
 .history-item {
   width: 100%;
-  padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.78);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 
-.history-item strong,
-.history-item span {
+.history-item-main {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.history-item-main strong,
+.history-item-main span {
   display: block;
 }
 
-.history-item strong {
+.history-item-main strong {
   margin-bottom: 4px;
 }
 
-.history-item span {
+.history-item-main span {
   color: var(--muted);
 }
 

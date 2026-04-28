@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 from firebase_admin import firestore
 
-from .learner_state import get_firestore_client
+from .learner_state import create_custom_assessment, get_firestore_client
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -261,6 +261,97 @@ def list_learning_materials(user_id: str) -> dict[str, Any]:
     return {"status": "success", "materials": materials}
 
 
+def delete_learning_material(user_id: str, material_id: str) -> dict[str, Any]:
+    normalized_id = str(material_id or "").strip()
+    if not normalized_id:
+        return {"status": "error", "message": "Missing material id."}
+
+    record = None
+    db = get_firestore_client()
+    if db:
+        snapshot = _material_collection(db, user_id).document(normalized_id).get()
+        if snapshot.exists:
+            record = snapshot.to_dict() or {}
+            _material_collection(db, user_id).document(normalized_id).delete()
+    else:
+        init_materials_sqlite()
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT local_path FROM learner_materials
+            WHERE user_id = ? AND material_id = ?
+            """,
+            (user_id, normalized_id),
+        )
+        row = cur.fetchone()
+        if row:
+            record = {"local_path": row[0]}
+            cur.execute(
+                """
+                DELETE FROM learner_materials
+                WHERE user_id = ? AND material_id = ?
+                """,
+                (user_id, normalized_id),
+            )
+            conn.commit()
+        conn.close()
+
+    local_path = Path(record.get("local_path", "")) if record else None
+    if local_path and local_path.is_file():
+        try:
+            local_path.unlink()
+        except OSError:
+            pass
+
+    if not record:
+        return {"status": "error", "message": "Material not found."}
+
+    return {"status": "success", "message": "Material deleted.", "material_id": normalized_id}
+
+
+def delete_all_learning_materials(user_id: str) -> dict[str, Any]:
+    records = _get_material_records(user_id)
+    if not records:
+        return {"status": "success", "message": "No materials to delete.", "deleted_count": 0}
+
+    db = get_firestore_client()
+    if db:
+        for record in records:
+            material_id = str(record.get("material_id", "")).strip()
+            if material_id:
+                _material_collection(db, user_id).document(material_id).delete()
+    else:
+        init_materials_sqlite()
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            DELETE FROM learner_materials
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        conn.commit()
+        conn.close()
+
+    deleted_count = 0
+    for record in records:
+        local_path = Path(record.get("local_path", ""))
+        if local_path.is_file():
+            try:
+                local_path.unlink()
+            except OSError:
+                pass
+        deleted_count += 1
+
+    return {
+        "status": "success",
+        "message": "All materials deleted.",
+        "deleted_count": deleted_count,
+    }
+
+
 def _get_material_records(user_id: str, material_ids: list[str] | None = None) -> list[dict[str, Any]]:
     wanted = set(material_ids or [])
     db = get_firestore_client()
@@ -404,3 +495,140 @@ def tutor_from_materials(user_id: str, query: str, material_ids: list[str] | Non
         "answer": "\n\n".join(answer_lines),
         "sources": context.get("sources", []),
     }
+
+
+def create_mock_test_from_materials(
+    user_id: str,
+    material_ids: list[str] | None = None,
+    topic: str = "",
+    level: str = "beginner",
+    goal: str = "",
+    question_count: int = 5,
+    structure: str = "",
+    sample_style: str = "",
+) -> dict[str, Any]:
+    records = _get_material_records(user_id, material_ids)
+    if not records:
+        return {"status": "error", "message": "No materials found to build a mock test from."}
+
+    try:
+        question_count = max(3, min(7, int(question_count)))
+    except (TypeError, ValueError):
+        question_count = 5
+
+    text_records = [record for record in records if record.get("extracted_text")]
+    if not text_records:
+        return {"status": "error", "message": "These materials do not contain enough text for a mock test yet."}
+
+    topic_name = str(topic).strip() or Path(text_records[0].get("name", "uploaded material")).stem.replace("-", " ")
+    client = _get_genai_client()
+    if not client:
+        return {"status": "error", "message": "Mock test generation is unavailable right now."}
+
+    joined = "\n\n".join(
+        f"{record.get('name')}:\n{record.get('extracted_text', '')[:7000]}"
+        for record in text_records[:3]
+    )
+    prompt = f"""
+Create a mock test using only the learner materials below.
+
+Topic: {topic_name}
+Level: {level}
+Goal: {goal or "Check real understanding from the uploaded notes"}
+Question count: {question_count}
+Requested structure: {structure or "Balanced exam with a mix of question types"}
+Sample exam style: {sample_style or "No sample style provided"}
+
+Materials:
+{joined}
+
+Return JSON only with this shape:
+{{
+  "questions": [
+    {{
+      "question_type": "multiple_choice or short_answer or essay",
+      "prompt": "Question text",
+      "options": ["A option", "B option", "C option", "D option"],
+      "correct_answer": "A or a short expected answer",
+      "explanation": "Short explanation grounded in the material",
+      "concept": "short concept tag",
+      "difficulty": "{level}",
+      "grading_guide": "What a strong answer should include"
+    }}
+  ]
+}}
+
+Requirements:
+- Use only the uploaded material.
+- Make the questions feel like a real mock test, not trivia.
+- Follow the requested structure and sample style closely when they are provided.
+- Include a mix of multiple choice, short answer, and essay when the structure suggests it.
+- Cover different ideas from the material where possible.
+- Keep wording simple and clear.
+- For multiple_choice, return exactly 4 options.
+- For short_answer and essay, return an empty options array.
+"""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "minItems": question_count,
+                "maxItems": question_count,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "question_type": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "minItems": 0,
+                            "maxItems": 4,
+                            "items": {"type": "string"},
+                        },
+                        "correct_answer": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "concept": {"type": "string"},
+                        "difficulty": {"type": "string"},
+                        "grading_guide": {"type": "string"},
+                    },
+                    "required": ["prompt", "question_type", "options", "correct_answer", "explanation", "concept", "difficulty", "grading_guide"],
+                },
+            }
+        },
+        "required": ["questions"],
+    }
+
+    try:
+        response = client.models.generate_content(
+            model=MATERIAL_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                responseMimeType="application/json",
+                responseSchema=schema,
+            ),
+        )
+        payload = json.loads(response.text)
+        questions = payload.get("questions") or []
+    except Exception as exc:
+        return {"status": "error", "message": f"Could not generate mock test: {exc}"}
+
+    assessment = create_custom_assessment(
+        user_id=user_id,
+        topic=topic_name,
+        questions=questions,
+        assessment_type="mock_test",
+        level=level,
+        goal=goal or f"Mock test from uploaded materials: {topic_name}",
+    )
+    if assessment.get("status") != "success":
+        return assessment
+
+    assessment["sources"] = [
+        {"material_id": record.get("material_id"), "name": record.get("name")}
+        for record in records[:4]
+    ]
+    assessment["message"] = "Mock test created from your materials."
+    return assessment

@@ -423,7 +423,8 @@ def _public_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "question_id": question["question_id"],
                 "prompt": question["prompt"],
-                "options": question["options"],
+                "question_type": question.get("question_type", "multiple_choice"),
+                "options": question.get("options", []),
                 "concept": question["concept"],
                 "difficulty": question["difficulty"],
             }
@@ -709,7 +710,9 @@ def get_learning_history(user_id: str, limit: int = 10) -> dict[str, Any]:
             .stream()
         )
         for doc in docs:
-            records.append(doc.to_dict())
+            record = doc.to_dict()
+            record["record_id"] = doc.id
+            records.append(record)
         return {"status": "success", "history": records}
 
     init_sqlite_fallback()
@@ -717,7 +720,7 @@ def get_learning_history(user_id: str, limit: int = 10) -> dict[str, Any]:
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT topic, activity_type, notes, score, created_at
+        SELECT id, topic, activity_type, notes, score, created_at
         FROM learning_progress
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -729,15 +732,92 @@ def get_learning_history(user_id: str, limit: int = 10) -> dict[str, Any]:
     conn.close()
     history = [
         {
-            "topic": row[0],
-            "activity_type": row[1],
-            "notes": row[2],
-            "score": row[3],
-            "created_at": row[4],
+            "record_id": row[0],
+            "topic": row[1],
+            "activity_type": row[2],
+            "notes": row[3],
+            "score": row[4],
+            "created_at": row[5],
         }
         for row in rows
     ]
     return {"status": "success", "history": history}
+
+
+def delete_learning_history_item(user_id: str, record_id: str) -> dict[str, Any]:
+    normalized_record_id = str(record_id).strip()
+    if not normalized_record_id:
+        return {"status": "error", "message": "Missing history record id."}
+
+    db = get_firestore_client()
+    if db:
+        record_ref = _user_doc(db, user_id).collection("progress").document(normalized_record_id)
+        snapshot = record_ref.get()
+        if not snapshot.exists:
+            return {"status": "not_found", "message": "History record not found."}
+        record_ref.delete()
+        return {
+            "status": "success",
+            "message": "Previous session deleted.",
+            "record_id": normalized_record_id,
+            "storage": "firestore",
+        }
+
+    init_sqlite_fallback()
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM learning_progress
+        WHERE user_id = ? AND id = ?
+        """,
+        (user_id, normalized_record_id),
+    )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted:
+        return {"status": "not_found", "message": "History record not found."}
+    return {
+        "status": "success",
+        "message": "Previous session deleted.",
+        "record_id": normalized_record_id,
+        "storage": "sqlite_fallback",
+    }
+
+
+def delete_all_learning_history(user_id: str) -> dict[str, Any]:
+    db = get_firestore_client()
+    if db:
+        docs = list(_user_doc(db, user_id).collection("progress").stream())
+        for doc in docs:
+            doc.reference.delete()
+        return {
+            "status": "success",
+            "message": "All previous sessions deleted.",
+            "deleted_count": len(docs),
+            "storage": "firestore",
+        }
+
+    init_sqlite_fallback()
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM learning_progress
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "status": "success",
+        "message": "All previous sessions deleted.",
+        "deleted_count": deleted,
+        "storage": "sqlite_fallback",
+    }
 
 
 def save_study_note(user_id: str, topic: str, note: str) -> dict[str, Any]:
@@ -912,6 +992,187 @@ def create_assessment(
     }
 
 
+def create_custom_assessment(
+    user_id: str,
+    topic: str,
+    questions: list[dict[str, Any]],
+    assessment_type: str = "mock_test",
+    level: str = "beginner",
+    goal: str = "",
+    available_time: int | None = None,
+    learning_style: str = "balanced",
+) -> dict[str, Any]:
+    normalized_type = str(assessment_type).strip().lower() or "mock_test"
+    normalized_topic = str(topic).strip() or "general learning"
+
+    normalized_questions: list[dict[str, Any]] = []
+    for index, question in enumerate(questions or []):
+        question_type = str(question.get("question_type", "multiple_choice")).strip().lower() or "multiple_choice"
+        if question_type not in {"multiple_choice", "short_answer", "essay"}:
+            question_type = "multiple_choice"
+        options = [str(option).strip() for option in (question.get("options") or [])][:4]
+        answer = str(question.get("correct_answer", "")).strip()
+        if question_type == "multiple_choice":
+            if len(options) != 4:
+                continue
+            answer = answer.upper()[:1]
+            if answer not in {"A", "B", "C", "D"}:
+                answer = "A"
+        else:
+            options = []
+            if not answer:
+                answer = str(question.get("grading_guide", "")).strip() or "See grading guide."
+        normalized_questions.append(
+            {
+                "question_id": f"q{index + 1}",
+                "question_type": question_type,
+                "prompt": str(question.get("prompt", "")).strip(),
+                "options": options,
+                "correct_answer": answer,
+                "explanation": str(question.get("explanation", "")).strip(),
+                "concept": str(question.get("concept", "general")).strip() or "general",
+                "difficulty": str(question.get("difficulty", level)).strip() or level,
+                "grading_guide": str(question.get("grading_guide", "")).strip(),
+            }
+        )
+
+    if not normalized_questions:
+        return {"status": "error", "message": "No valid questions were generated."}
+
+    save_learner_profile(
+        user_id=user_id,
+        topic=normalized_topic,
+        level=level,
+        learning_style=learning_style,
+        available_time=available_time,
+        goal=goal,
+    )
+
+    created_at = _utc_now()
+    assessment_id = str(uuid.uuid4())
+    record = {
+        "assessment_id": assessment_id,
+        "user_id": user_id,
+        "topic": normalized_topic,
+        "assessment_type": normalized_type,
+        "level": level,
+        "goal": goal,
+        "learning_style": learning_style,
+        "available_time": available_time,
+        "status": "open",
+        "question_count": len(normalized_questions),
+        "questions": normalized_questions,
+        "created_at": created_at,
+        "submitted_at": "",
+        "score": None,
+    }
+
+    db = get_firestore_client()
+    if db:
+        _user_doc(db, user_id).collection("assessments").document(assessment_id).set(record)
+    else:
+        init_sqlite_fallback()
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO assessments
+            (assessment_id, user_id, topic, assessment_type, level, goal, status, question_count, questions_json, answers_json, result_json, score, created_at, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                assessment_id,
+                user_id,
+                normalized_topic,
+                normalized_type,
+                level,
+                goal,
+                "open",
+                len(normalized_questions),
+                json.dumps(normalized_questions),
+                json.dumps({}),
+                json.dumps({}),
+                None,
+                created_at,
+                "",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    return {
+        "status": "success",
+        "assessment_id": assessment_id,
+        "assessment_type": normalized_type,
+        "topic": normalized_topic,
+        "level": level,
+        "goal": goal,
+        "questions": _public_questions(normalized_questions),
+        "question_count": len(normalized_questions),
+    }
+
+
+def _grade_open_response(question: dict[str, Any], learner_answer: str) -> tuple[float, str, str]:
+    answer_text = str(learner_answer or "").strip()
+    if not answer_text:
+        return 0.0, "No answer submitted.", str(question.get("correct_answer", "")).strip()
+
+    client = _get_genai_client()
+    expected = str(question.get("correct_answer", "")).strip()
+    guide = str(question.get("grading_guide", "")).strip()
+    if client:
+        schema = {
+            "type": "object",
+            "properties": {
+                "score": {"type": "number"},
+                "feedback": {"type": "string"},
+                "expected_answer": {"type": "string"},
+            },
+            "required": ["score", "feedback", "expected_answer"],
+        }
+        prompt = f"""
+Grade this learner response.
+
+Question: {question.get('prompt', '')}
+Question type: {question.get('question_type', 'short_answer')}
+Expected answer: {expected}
+Grading guide: {guide}
+Learner answer: {answer_text}
+
+Return JSON only with:
+- score: between 0 and 1
+- feedback: short feedback
+- expected_answer: short ideal answer
+"""
+        try:
+            response = client.models.generate_content(
+                model=QUIZ_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    responseMimeType="application/json",
+                    responseSchema=schema,
+                ),
+            )
+            payload = json.loads(response.text)
+            score = max(0.0, min(1.0, _safe_float(payload.get("score"), 0.0)))
+            feedback = str(payload.get("feedback", "")).strip() or "Reviewed."
+            expected_answer = str(payload.get("expected_answer", "")).strip() or expected
+            return score, feedback, expected_answer
+        except Exception:
+            pass
+
+    keywords = {
+        token for token in re.findall(r"[a-zA-Z0-9]+", f"{expected} {guide}".lower()) if len(token) > 3
+    }
+    answer_words = {token for token in re.findall(r"[a-zA-Z0-9]+", answer_text.lower()) if len(token) > 3}
+    overlap = len(keywords & answer_words)
+    ratio = overlap / max(1, len(keywords)) if keywords else 0.5
+    score = 1.0 if ratio >= 0.6 else 0.6 if ratio >= 0.3 else 0.2
+    feedback = "Good coverage." if score >= 0.8 else "Partially correct." if score >= 0.5 else "Needs more detail."
+    return score, feedback, expected
+
+
 def _get_assessment_record(user_id: str, assessment_id: str) -> dict[str, Any] | None:
     db = get_firestore_client()
     if db:
@@ -971,37 +1232,52 @@ def submit_assessment(
 
     confidence_by_question = confidence_by_question or {}
     normalized_answers = {
-        str(question_id): str(answer).strip().upper()[:1] for question_id, answer in (answers or {}).items()
+        str(question_id): str(answer).strip() for question_id, answer in (answers or {}).items()
     }
 
     question_results = []
-    correct_count = 0
-    concept_totals: dict[str, list[int]] = {}
+    earned_score_total = 0.0
+    correct_count = 0.0
+    concept_totals: dict[str, list[float]] = {}
     for question in record.get("questions", []):
         question_id = question["question_id"]
         selected = normalized_answers.get(question_id, "")
+        question_type = question.get("question_type", "multiple_choice")
         correct = question.get("correct_answer", "A")
-        is_correct = selected == correct
+        if question_type == "multiple_choice":
+            normalized_selected = selected.upper()[:1]
+            is_correct = normalized_selected == correct
+            numeric_score = 1.0 if is_correct else 0.0
+            feedback = question.get("explanation", "")
+            expected_answer = correct
+            selected_value = normalized_selected or "No answer"
+        else:
+            numeric_score, feedback, expected_answer = _grade_open_response(question, selected)
+            is_correct = numeric_score >= 0.7
+            selected_value = selected or "No answer"
+        earned_score_total += numeric_score
         if is_correct:
             correct_count += 1
         concept = question.get("concept", "general")
-        concept_totals.setdefault(concept, [0, 0])
-        concept_totals[concept][0] += 1 if is_correct else 0
-        concept_totals[concept][1] += 1
+        concept_totals.setdefault(concept, [0.0, 0.0])
+        concept_totals[concept][0] += numeric_score
+        concept_totals[concept][1] += 1.0
         question_results.append(
             {
                 "question_id": question_id,
                 "concept": concept,
-                "selected_answer": selected or "No answer",
-                "correct_answer": correct,
+                "question_type": question_type,
+                "selected_answer": selected_value,
+                "correct_answer": expected_answer,
                 "is_correct": is_correct,
-                "explanation": question.get("explanation", ""),
+                "score": round(numeric_score, 3),
+                "explanation": feedback or question.get("explanation", ""),
                 "confidence": _safe_float(confidence_by_question.get(question_id), 0.0),
             }
         )
 
     question_count = max(1, len(record.get("questions", [])))
-    score = round(correct_count / question_count, 3)
+    score = round(earned_score_total / question_count, 3)
     concept_accuracy = {
         concept: round(values[0] / values[1], 3) if values[1] else 0.0
         for concept, values in concept_totals.items()
@@ -1020,7 +1296,7 @@ def submit_assessment(
         "topic": record.get("topic", "general"),
         "assessment_type": record.get("assessment_type", "diagnostic"),
         "score": score,
-        "correct_count": correct_count,
+        "correct_count": round(correct_count, 2),
         "question_count": question_count,
         "concept_accuracy": concept_accuracy,
         "weak_concepts": weak_concepts,

@@ -205,7 +205,10 @@
 
                 <form id="diagnostic-form" class="diagnostic-form hidden">
                   <div id="diagnostic-questions" class="diagnostic-questions"></div>
-                  <button id="submit-diagnostic-button" class="primary-button" type="submit">Submit answers</button>
+                  <div class="inline-actions">
+                    <button id="submit-diagnostic-button" class="primary-button" type="submit">Submit answers</button>
+                    <button id="download-assessment-pdf-button" class="ghost-button hidden" type="button">Download PDF</button>
+                  </div>
                 </form>
 
                 <div id="diagnostic-result" class="diagnostic-result hidden"></div>
@@ -281,41 +284,78 @@
             <section id="materials" class="content-card panel-lite" aria-live="polite">
               <div class="section-head">
                 <div>
-                  <p class="section-label">Grounded study</p>
-                  <h3>Materials and grounded tutor</h3>
+                  <p class="section-label">Study with your own notes</p>
+                  <h3>Materials</h3>
                 </div>
-                <button id="upload-material-button" class="primary-button" type="button">Upload material</button>
+                <p class="state-summary">Add notes. Pick a source. Ask one question.</p>
               </div>
 
-              <div class="assessment-grid assessment-grid-wide">
-                <label>
-                  <span>Choose file</span>
-                  <input id="material-file" type="file" accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.png,.jpg,.jpeg,.webp" />
-                </label>
-                <label>
-                  <span>Paste study text</span>
-                  <textarea id="material-text" rows="3" placeholder="Paste lecture notes, syllabus text, or study snippets here."></textarea>
-                </label>
-                <label>
-                  <span>Question for materials</span>
-                  <input id="material-query" type="text" placeholder="Explain this document in simple terms" />
-                </label>
-                <label>
-                  <span>Selected sources</span>
-                  <div id="materials-selection-summary" class="state-summary field-note">No materials selected.</div>
-                </label>
+              <div class="materials-flow">
+                <section class="materials-step nested-card">
+                  <div class="materials-step-head">
+                    <p class="section-label">Step 1</p>
+                    <h4>Add material</h4>
+                  </div>
+                  <div class="assessment-grid assessment-grid-wide">
+                    <label>
+                      <span>Upload file</span>
+                      <input id="material-file" type="file" accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.png,.jpg,.jpeg,.webp" />
+                    </label>
+                    <label>
+                      <span>Or paste notes</span>
+                      <textarea id="material-text" rows="4" placeholder="Paste lecture notes, lesson text, or examples here."></textarea>
+                    </label>
+                  </div>
+                  <div class="inline-actions">
+                    <button id="upload-material-button" class="primary-button" type="button">Save material</button>
+                  </div>
+                </section>
+
+                <section class="materials-step nested-card">
+                  <div class="materials-step-head">
+                    <p class="section-label">Step 2</p>
+                    <h4>Choose source</h4>
+                  </div>
+                  <div class="inline-actions">
+                    <button id="delete-all-materials-button" class="ghost-button" type="button">Delete all</button>
+                  </div>
+                  <div id="materials-selection-summary" class="state-summary field-note">No source selected.</div>
+                  <div id="materials-library" class="materials-library">
+                    <p class="mastery-empty">Nothing uploaded yet.</p>
+                  </div>
+                </section>
+
+                <section class="materials-step nested-card">
+                  <div class="materials-step-head">
+                    <p class="section-label">Step 3</p>
+                    <h4>Ask or create a mock test</h4>
+                  </div>
+                  <label class="materials-question">
+                    <span>Your question</span>
+                    <input id="material-query" type="text" placeholder="Explain this in simple words" />
+                  </label>
+                  <label class="materials-question">
+                    <span>Mock test structure</span>
+                    <textarea id="materials-mock-structure" rows="3" placeholder="Example: 2 short answers, 1 essay, 3 multiple choice. Focus on definitions, examples, and one applied problem."></textarea>
+                  </label>
+                  <label class="materials-question">
+                    <span>Sample exam style (optional)</span>
+                    <textarea id="materials-mock-style" rows="3" placeholder="Paste or describe the style of a midterm, quiz, or previous exam you want this to imitate."></textarea>
+                  </label>
+                  <label class="materials-question">
+                    <span>Or upload sample exam</span>
+                    <input id="materials-mock-style-file" type="file" accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
+                  </label>
+                  <div class="inline-actions">
+                    <button id="ask-materials-button" class="primary-button" type="button">Ask tutor</button>
+                    <button id="create-materials-mock-test-button" class="ghost-button" type="button">Create mock test</button>
+                  </div>
+                  <p class="state-summary">Use your uploaded notes. Add structure if you want a more realistic exam.</p>
+                </section>
               </div>
 
               <div id="materials-status" class="assessment-status">
-                Upload notes, then ask.
-              </div>
-
-              <div class="inline-actions">
-                <button id="ask-materials-button" class="ghost-button" type="button">Ask grounded tutor</button>
-              </div>
-
-              <div id="materials-library" class="materials-library">
-                <p class="mastery-empty">No materials yet.</p>
+                Start by adding one note or file.
               </div>
             </section>
           </section>

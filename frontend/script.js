@@ -31,6 +31,7 @@ const assessmentStatus = document.getElementById("assessment-status");
 const diagnosticForm = document.getElementById("diagnostic-form");
 const diagnosticQuestions = document.getElementById("diagnostic-questions");
 const diagnosticResult = document.getElementById("diagnostic-result");
+const downloadAssessmentPdfButton = document.getElementById("download-assessment-pdf-button");
 const masteryScore = document.getElementById("mastery-score");
 const masteryTopics = document.getElementById("mastery-topics");
 const generateRoadmapButton = document.getElementById("generate-roadmap-button");
@@ -47,8 +48,13 @@ const roadmapBoard = document.getElementById("roadmap-board");
 const materialFileInput = document.getElementById("material-file");
 const materialTextInput = document.getElementById("material-text");
 const materialQueryInput = document.getElementById("material-query");
+const materialsMockStructureInput = document.getElementById("materials-mock-structure");
+const materialsMockStyleInput = document.getElementById("materials-mock-style");
+const materialsMockStyleFileInput = document.getElementById("materials-mock-style-file");
 const uploadMaterialButton = document.getElementById("upload-material-button");
 const askMaterialsButton = document.getElementById("ask-materials-button");
+const createMaterialsMockTestButton = document.getElementById("create-materials-mock-test-button");
+const deleteAllMaterialsButton = document.getElementById("delete-all-materials-button");
 const materialsStatus = document.getElementById("materials-status");
 const materialsLibrary = document.getElementById("materials-library");
 const materialsSelectionSummary = document.getElementById("materials-selection-summary");
@@ -105,9 +111,11 @@ let pendingInputMode = "text";
 let latestLearnerState = null;
 let latestMaterials = [];
 let latestInterventionPlan = null;
+let latestWeeklyReport = null;
 let selectedRoadmapSessionKey = "";
 let previousSessionsExpanded = false;
 let selectedHistoryItemKey = "";
+let previousResourcesExpanded = false;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -118,7 +126,137 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function normalizePdfText(value) {
+  return String(value ?? "")
+    .replace(/[^\x20-\x7E]/g, "?")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("(", "\\(")
+    .replaceAll(")", "\\)");
+}
+
+function wrapPdfText(text, maxChars = 88) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  if (!words.length) {
+    return [""];
+  }
+
+  const lines = [];
+  let current = words[0];
+  for (const word of words.slice(1)) {
+    if (`${current} ${word}`.length <= maxChars) {
+      current += ` ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+function buildAssessmentPdfBlob(assessment) {
+  const lines = [];
+  const title = assessment.assessment_type === "mock_test" ? "ARKAIS Mock Test" : "ARKAIS Assessment";
+  lines.push(title);
+  lines.push(`Topic: ${assessment.topic || "General learning"}`);
+  lines.push(`Level: ${assessment.level || "beginner"}`);
+  if (assessment.goal) {
+    lines.push(`Goal: ${assessment.goal}`);
+  }
+  lines.push("");
+
+  (assessment.questions || []).forEach((question, index) => {
+    const questionType = (question.question_type || "multiple_choice").replaceAll("_", " ");
+    lines.push(`Question ${index + 1} (${questionType})`);
+    wrapPdfText(question.prompt || "").forEach((line) => lines.push(line));
+    if ((question.question_type || "multiple_choice") === "multiple_choice") {
+      (question.options || []).forEach((option, optionIndex) => {
+        const label = `${String.fromCharCode(65 + optionIndex)}. ${option}`;
+        wrapPdfText(label || "", 82).forEach((line) => lines.push(line));
+      });
+    } else {
+      lines.push("");
+      lines.push("Answer:");
+      const answerSpace = question.question_type === "essay" ? 10 : 4;
+      for (let i = 0; i < answerSpace; i += 1) {
+        lines.push("____________________________________________________________");
+      }
+    }
+    lines.push("");
+  });
+
+  const pageHeight = 52;
+  const pages = [];
+  for (let i = 0; i < lines.length; i += pageHeight) {
+    pages.push(lines.slice(i, i + pageHeight));
+  }
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  const objects = [];
+
+  const addObject = (content) => {
+    offsets.push(pdf.length);
+    const objectNumber = offsets.length;
+    pdf += `${objectNumber} 0 obj\n${content}\nendobj\n`;
+    return objectNumber;
+  };
+
+  const fontObject = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const pageObjectNumbers = [];
+
+  pages.forEach((pageLines) => {
+    const contentCommands = ["BT", "/F1 11 Tf", "50 790 Td", "14 TL"];
+    pageLines.forEach((line, lineIndex) => {
+      const safeLine = normalizePdfText(line);
+      if (lineIndex === 0) {
+        contentCommands.push(`(${safeLine}) Tj`);
+      } else {
+        contentCommands.push("T*");
+        contentCommands.push(`(${safeLine}) Tj`);
+      }
+    });
+    contentCommands.push("ET");
+    const stream = contentCommands.join("\n");
+    const contentObject = addObject(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    const pageObject = addObject(
+      `<< /Type /Page /Parent PAGES_REF 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontObject} 0 R >> >> /Contents ${contentObject} 0 R >>`
+    );
+    pageObjectNumbers.push(pageObject);
+  });
+
+  const kids = pageObjectNumbers.map((num) => `${num} 0 R`).join(" ");
+  const pagesObjectNumber = addObject(`<< /Type /Pages /Kids [${kids}] /Count ${pageObjectNumbers.length} >>`);
+
+  pageObjectNumbers.forEach((pageNumber) => {
+    const marker = `${pageNumber} 0 obj\n`;
+    const start = pdf.indexOf(marker);
+    const end = pdf.indexOf("endobj\n", start);
+    const original = pdf.slice(start, end);
+    const updated = original.replace("PAGES_REF", String(pagesObjectNumber));
+    pdf = `${pdf.slice(0, start)}${updated}${pdf.slice(end)}`;
+  });
+
+  const catalogObjectNumber = addObject(`<< /Type /Catalog /Pages ${pagesObjectNumber} 0 R >>`);
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((offset) => {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${offsets.length + 1} /Root ${catalogObjectNumber} 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  return new Blob([pdf], { type: "application/pdf" });
+}
+
+function updateAssessmentActions() {
+  const hasAssessment = Boolean(activeAssessment?.assessment_id);
+  downloadAssessmentPdfButton.classList.toggle("hidden", !hasAssessment);
+}
+
 function buildHistoryItemKey(item) {
+  if (item?.record_id !== undefined && item?.record_id !== null && String(item.record_id).trim()) {
+    return `record::${String(item.record_id).trim()}`;
+  }
   return `${item.created_at || "time"}::${item.topic || "topic"}::${item.activity_type || "activity"}`;
 }
 
@@ -361,8 +499,22 @@ function renderMasteryBoard(mastery) {
   masteryScore.textContent = `${Math.round(overall * 100)}%`;
 
   const sessions = getPreviousSessions();
+  const controls = `
+    <div class="inline-actions">
+      <button class="ghost-button history-toggle" type="button" data-history-toggle="true">
+        Previous sessions
+      </button>
+      <button class="ghost-button" type="button" data-history-delete-all="true"${sessions.length ? "" : " disabled"}>
+        Delete all
+      </button>
+    </div>
+  `;
+
   if (!sessions.length) {
-    masteryTopics.innerHTML = `<p class="mastery-empty">No previous sessions yet.</p>`;
+    masteryTopics.innerHTML = `
+      ${controls}
+      <p class="mastery-empty">No previous sessions yet.</p>
+    `;
     return;
   }
 
@@ -372,26 +524,103 @@ function renderMasteryBoard(mastery) {
   }
 
   masteryTopics.innerHTML = `
-    <button class="ghost-button history-toggle" type="button" data-history-toggle="true">
-      Previous sessions
-    </button>
+    ${controls}
     ${previousSessionsExpanded ? `
       <div class="history-list">
         ${sessions
           .map((item) => `
-            <button
-              class="history-item${selectedHistoryItem?.key === item.key ? " is-selected" : ""}"
-              type="button"
-              data-history-item="${escapeHtml(item.key)}"
-            >
-              <strong>${escapeHtml(item.topic)}</strong>
-              <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
-            </button>
+            <article class="history-item${selectedHistoryItem?.key === item.key ? " is-selected" : ""}">
+              <button
+                class="history-item-main"
+                type="button"
+                data-history-item="${escapeHtml(item.key)}"
+              >
+                <strong>${escapeHtml(item.topic)}</strong>
+                <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
+              </button>
+              <button
+                class="mini-button"
+                type="button"
+                data-history-delete="${escapeHtml(item.key)}"
+              >
+                Delete
+              </button>
+            </article>
           `)
           .join("")}
       </div>
     ` : ""}
   `;
+}
+
+async function deleteHistoryItem(itemKey) {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  const historyItem = findHistoryItemByKey(itemKey);
+  if (!historyItem?.record_id) {
+    roadmapStatus.textContent = "Could not find that previous session.";
+    return;
+  }
+
+  roadmapStatus.textContent = "Deleting previous session...";
+  const response = await fetch("/api/history/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      userId: username,
+      idToken: getIdToken(),
+      recordId: historyItem.record_id,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not delete previous session.");
+  }
+
+  if (selectedHistoryItemKey === itemKey) {
+    selectedHistoryItemKey = "";
+  }
+  await refreshLearnerState();
+  await refreshMasteryBoard();
+  renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+  roadmapStatus.textContent = data.message || "Previous session deleted.";
+}
+
+async function deleteAllHistoryItems() {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  roadmapStatus.textContent = "Deleting previous sessions...";
+  const response = await fetch("/api/history/delete-all", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      userId: username,
+      idToken: getIdToken(),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not delete previous sessions.");
+  }
+
+  selectedHistoryItemKey = "";
+  previousSessionsExpanded = false;
+  await refreshLearnerState();
+  await refreshMasteryBoard();
+  renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+  roadmapStatus.textContent = data.message || "All previous sessions deleted.";
 }
 
 async function refreshMasteryBoard() {
@@ -415,11 +644,31 @@ async function refreshMasteryBoard() {
   }
 }
 
-masteryTopics.addEventListener("click", (event) => {
+masteryTopics.addEventListener("click", async (event) => {
   const toggleButton = event.target.closest("[data-history-toggle]");
   if (toggleButton) {
     previousSessionsExpanded = !previousSessionsExpanded;
     renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
+    return;
+  }
+
+  const deleteAllButton = event.target.closest("[data-history-delete-all]");
+  if (deleteAllButton) {
+    try {
+      await deleteAllHistoryItems();
+    } catch (error) {
+      roadmapStatus.textContent = error.message;
+    }
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-history-delete]");
+  if (deleteButton) {
+    try {
+      await deleteHistoryItem(deleteButton.dataset.historyDelete || "");
+    } catch (error) {
+      roadmapStatus.textContent = error.message;
+    }
     return;
   }
 
@@ -771,16 +1020,35 @@ async function refreshRoadmap() {
 
 function updateMaterialsSelectionSummary() {
   if (!selectedMaterialIds.size) {
-    materialsSelectionSummary.textContent = "No materials selected.";
+    materialsSelectionSummary.textContent = "Choose 1 source to use.";
     return;
   }
-  materialsSelectionSummary.textContent = `${selectedMaterialIds.size} selected.`;
+  materialsSelectionSummary.textContent = `${selectedMaterialIds.size} source${selectedMaterialIds.size === 1 ? "" : "s"} ready.`;
+}
+
+function formatMaterialTimeLabel(value) {
+  if (!value) {
+    return "recently";
+  }
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) {
+    return "recently";
+  }
+  const diffMs = Date.now() - then.getTime();
+  const diffDays = Math.max(0, Math.round(diffMs / 86400000));
+  if (diffDays <= 0) {
+    return "today";
+  }
+  if (diffDays === 1) {
+    return "1 day ago";
+  }
+  return `${diffDays} days ago`;
 }
 
 function renderMaterials(materials = []) {
   latestMaterials = materials;
   if (!materials.length) {
-    materialsLibrary.innerHTML = `<p class="mastery-empty">No materials yet.</p>`;
+    materialsLibrary.innerHTML = `<p class="mastery-empty">Nothing uploaded yet.</p>`;
     updateMaterialsSelectionSummary();
     refreshOverview();
     return;
@@ -789,8 +1057,9 @@ function renderMaterials(materials = []) {
   const validIds = new Set(materials.map((material) => material.material_id));
   selectedMaterialIds = new Set([...selectedMaterialIds].filter((id) => validIds.has(id)));
 
-  materialsLibrary.innerHTML = materials
-    .map((material) => {
+  const latestMaterial = materials[0] || null;
+  const previousMaterials = materials.slice(1);
+  const renderMaterialCard = (material) => {
       const checked = selectedMaterialIds.has(material.material_id) ? "checked" : "";
       const meta = material.kind === "image"
         ? `${material.metadata?.width || "?"}x${material.metadata?.height || "?"}`
@@ -802,16 +1071,117 @@ function renderMaterials(materials = []) {
               <p class="section-label">${material.kind}</p>
               <h5>${material.name}</h5>
             </div>
-            <input class="material-select" type="checkbox" data-material-id="${material.material_id}" ${checked} />
+            <div class="material-card-actions">
+              <input class="material-select" type="checkbox" data-material-id="${material.material_id}" ${checked} />
+              <button class="mini-button" type="button" data-delete-material="${material.material_id}">Delete</button>
+            </div>
           </header>
           <p>${material.summary}</p>
-          <p>${meta} • added ${material.created_at || "recently"}</p>
+          <p>${meta} • added ${formatMaterialTimeLabel(material.created_at)}</p>
         </article>
       `;
-    })
-    .join("");
+    };
+
+  materialsLibrary.innerHTML = `
+    ${latestMaterial ? `
+      <section class="materials-group">
+        <div class="materials-group-head">
+          <p class="section-label">Current resource</p>
+        </div>
+        ${renderMaterialCard(latestMaterial)}
+      </section>
+    ` : ""}
+    ${previousMaterials.length ? `
+      <section class="materials-group">
+        <button class="ghost-button" type="button" data-toggle-previous-resources="true">
+          Previous resources
+        </button>
+        ${previousResourcesExpanded ? `
+          <div class="materials-history">
+            ${previousMaterials.map(renderMaterialCard).join("")}
+          </div>
+        ` : ""}
+      </section>
+    ` : ""}
+  `;
   updateMaterialsSelectionSummary();
   refreshOverview();
+}
+
+async function deleteMaterial(materialId) {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  const previousMaterialsSnapshot = [...latestMaterials];
+  latestMaterials = latestMaterials.filter((material) => material.material_id !== materialId);
+  selectedMaterialIds.delete(materialId);
+  renderMaterials(latestMaterials);
+  materialsStatus.textContent = "Deleting resource...";
+  try {
+    const response = await fetch("/api/materials/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        materialId,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not delete material.");
+    }
+    materialsStatus.textContent = "Resource deleted.";
+    await refreshMaterials();
+    await refreshInsights();
+  } catch (error) {
+    latestMaterials = previousMaterialsSnapshot;
+    renderMaterials(latestMaterials);
+    materialsStatus.textContent = error.message;
+  }
+}
+
+async function deleteAllMaterials() {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  const previousMaterialsSnapshot = [...latestMaterials];
+  latestMaterials = [];
+  selectedMaterialIds.clear();
+  previousResourcesExpanded = false;
+  renderMaterials([]);
+  materialsStatus.textContent = "Deleting all resources...";
+  try {
+    const response = await fetch("/api/materials/delete-all", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not delete all materials.");
+    }
+    materialsStatus.textContent = "All resources deleted.";
+    await refreshMaterials();
+    await refreshInsights();
+  } catch (error) {
+    latestMaterials = previousMaterialsSnapshot;
+    renderMaterials(latestMaterials);
+    materialsStatus.textContent = error.message;
+  }
 }
 
 async function refreshMaterials() {
@@ -871,6 +1241,7 @@ function renderInterventionPlan(plan) {
 }
 
 function renderWeeklyReport(report) {
+  latestWeeklyReport = report || null;
   if (!report) {
     reportBoard.innerHTML = `<p class="mastery-empty">No report yet.</p>`;
     return;
@@ -880,11 +1251,27 @@ function renderWeeklyReport(report) {
       <header>
         <div>
           <p class="section-label">Weekly report</p>
-          <h5>${report.title}</h5>
+          <h5>${escapeHtml(report.title)}</h5>
         </div>
       </header>
-      <p>${report.note_text.replace(/\n/g, "<br />")}</p>
+      <p>${escapeHtml(report.note_text).replace(/\n/g, "<br />")}</p>
+      <div class="inline-actions">
+        <button id="save-report-docs-button" class="ghost-button" type="button">Save to Google Docs</button>
+      </div>
+      <p id="report-save-status" class="state-summary">Save this report to Google Docs when you are ready.</p>
     </article>
+  `;
+}
+
+function renderGoogleDocsAuthMessage(result) {
+  const authUrl = String(result?.authorization_url || "").trim();
+  if (!authUrl) {
+    return "Google Docs sign-in is needed before saving.";
+  }
+  return `
+    Google sign-in is needed before saving.<br />
+    Open this link in Chrome or Safari:<br />
+    <a href="${escapeHtml(authUrl)}" target="_blank" rel="noreferrer">${escapeHtml(authUrl)}</a>
   `;
 }
 
@@ -1202,22 +1589,37 @@ function setupVoiceRecognition() {
 function renderAssessmentQuestions(questions) {
   diagnosticQuestions.innerHTML = questions
     .map((question, index) => {
-      const optionsMarkup = question.options
-        .map(
-          (option, optionIndex) => `
-            <label class="option-row">
-              <input type="radio" name="${question.question_id}" value="${String.fromCharCode(65 + optionIndex)}" />
-              <span><strong>${String.fromCharCode(65 + optionIndex)}.</strong> ${option}</span>
-            </label>
-          `
-        )
-        .join("");
+      const questionType = question.question_type || "multiple_choice";
+      let inputMarkup = "";
+      if (questionType === "multiple_choice") {
+        inputMarkup = (question.options || [])
+          .map(
+            (option, optionIndex) => `
+              <label class="option-row">
+                <input type="radio" name="${question.question_id}" value="${String.fromCharCode(65 + optionIndex)}" />
+                <span><strong>${String.fromCharCode(65 + optionIndex)}.</strong> ${option}</span>
+              </label>
+            `
+          )
+          .join("");
+        inputMarkup = `<div class="options-list">${inputMarkup}</div>`;
+      } else {
+        inputMarkup = `
+          <textarea
+            class="assessment-text-answer"
+            name="${question.question_id}"
+            rows="${questionType === "essay" ? 6 : 3}"
+            placeholder="${questionType === "essay" ? "Write your full answer here" : "Write a short answer here"}"
+          ></textarea>
+        `;
+      }
 
       return `
         <section class="diagnostic-question">
           <h5>Question ${index + 1}</h5>
+          <p class="section-label">${questionType.replace("_", " ")}</p>
           <p>${question.prompt}</p>
-          <div class="options-list">${optionsMarkup}</div>
+          ${inputMarkup}
         </section>
       `;
     })
@@ -1231,7 +1633,9 @@ function renderAssessmentResult(result) {
       (item) => `
         <article class="result-card">
           <strong>${item.concept}</strong>
-          <p>${item.is_correct ? "Correct" : `Needs review • correct answer: ${item.correct_answer}`}</p>
+          <p>${item.is_correct ? "Strong answer" : `Needs review${item.correct_answer ? ` • expected: ${item.correct_answer}` : ""}`}</p>
+          <p>${item.question_type ? `Type: ${item.question_type.replace("_", " ")}` : ""}</p>
+          <p>${typeof item.score === "number" ? `Score: ${Math.round(item.score * 100)}%` : ""}</p>
           <p>${item.explanation}</p>
         </article>
       `
@@ -1241,7 +1645,7 @@ function renderAssessmentResult(result) {
   diagnosticResult.innerHTML = `
     <article class="result-card">
       <strong>Score: ${Math.round((result.score || 0) * 100)}%</strong>
-      <p>${result.correct_count}/${result.question_count} correct</p>
+      <p>${result.correct_count}/${result.question_count} strong responses</p>
       <p>Weak concepts: ${weakConcepts}</p>
       <p>${result.recommended_next_action}</p>
     </article>
@@ -1249,6 +1653,28 @@ function renderAssessmentResult(result) {
   `;
   diagnosticResult.classList.remove("hidden");
 }
+
+downloadAssessmentPdfButton.addEventListener("click", () => {
+  if (!activeAssessment?.assessment_id) {
+    assessmentStatus.textContent = "Create a mock test first.";
+    return;
+  }
+
+  const blob = buildAssessmentPdfBlob(activeAssessment);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const topicSlug = String(activeAssessment.topic || "mock-test")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "mock-test";
+  link.href = url;
+  link.download = `${topicSlug}-mock-test.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  assessmentStatus.textContent = "Mock test PDF downloaded.";
+});
 
 function ensureIdentity() {
   const username = getUsername();
@@ -1293,6 +1719,22 @@ function buildMessageBody(body) {
       anchor.target = "_blank";
       anchor.rel = "noreferrer";
       anchor.className = "message-link";
+    });
+
+    container.querySelectorAll("pre").forEach((pre) => {
+      const raw = String(pre.textContent || "").trim();
+      if (!/^https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?/.test(raw)) {
+        return;
+      }
+      const wrapper = document.createElement("p");
+      const anchor = document.createElement("a");
+      anchor.href = raw;
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.className = "message-link";
+      anchor.textContent = "Open Google Sign-In";
+      wrapper.appendChild(anchor);
+      pre.replaceWith(wrapper);
     });
   } else {
     const p = document.createElement("p");
@@ -1447,6 +1889,15 @@ async function readFileAsDataUrl(file) {
   });
 }
 
+async function readFileAsText(file) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read file."));
+    reader.readAsText(file);
+  });
+}
+
 seedButton.addEventListener("click", () => {
   setActiveView("tutor");
   promptInput.value = "Teach me loops with one example and one exercise.";
@@ -1597,6 +2048,69 @@ generateReportButton.addEventListener("click", async () => {
   }
 });
 
+reportBoard.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || target.id !== "save-report-docs-button") {
+    return;
+  }
+
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  if (!latestWeeklyReport) {
+    renderWeeklyReport(null);
+    return;
+  }
+
+  const statusNode = document.getElementById("report-save-status");
+  if (statusNode) {
+    statusNode.textContent = "Saving to Google Docs...";
+  }
+  target.setAttribute("disabled", "disabled");
+
+  try {
+    const response = await fetch("/api/report/save-google-doc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        title: latestWeeklyReport.title || "",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || "Could not save report.");
+    }
+
+    if (data.status === "auth_required") {
+      if (statusNode) {
+        statusNode.innerHTML = renderGoogleDocsAuthMessage(data);
+      }
+      return;
+    }
+
+    if (data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not save report.");
+    }
+
+    if (statusNode) {
+      statusNode.textContent = data.message || "Saved to Google Docs.";
+    }
+  } catch (error) {
+    if (statusNode) {
+      statusNode.textContent = error.message;
+    }
+  } finally {
+    target.removeAttribute("disabled");
+  }
+});
+
 refreshSystemButton.addEventListener("click", async () => {
   await refreshSystemStatus();
 });
@@ -1615,12 +2129,12 @@ uploadMaterialButton.addEventListener("click", async () => {
   const file = materialFileInput.files?.[0] || null;
   const pastedText = materialTextInput.value.trim();
   if (!file && !pastedText) {
-    materialsStatus.textContent = "Choose a file or paste study text first.";
+    materialsStatus.textContent = "Add a file or paste notes first.";
     return;
   }
 
   uploadMaterialButton.disabled = true;
-  materialsStatus.textContent = "Uploading material...";
+  materialsStatus.textContent = "Saving material...";
   try {
     const dataBase64 = file ? await readFileAsDataUrl(file) : "";
     const response = await fetch("/api/materials/upload", {
@@ -1642,7 +2156,7 @@ uploadMaterialButton.addEventListener("click", async () => {
     if (!response.ok || data.status !== "success") {
       throw new Error(data.error || data.message || "Could not upload material.");
     }
-    materialsStatus.textContent = `Uploaded ${data.material.name}.`;
+    materialsStatus.textContent = `${data.material.name} is ready.`;
     materialFileInput.value = "";
     materialTextInput.value = "";
     await refreshMaterials();
@@ -1661,14 +2175,14 @@ askMaterialsButton.addEventListener("click", async () => {
     return;
   }
 
-  const query = materialQueryInput.value.trim() || promptInput.value.trim();
+    const query = materialQueryInput.value.trim() || promptInput.value.trim();
   if (!query) {
-    materialsStatus.textContent = "Ask a question about your materials first.";
+    materialsStatus.textContent = "Type one question first.";
     materialQueryInput.focus();
     return;
   }
 
-  materialsStatus.textContent = "Grounding tutor answer from selected materials...";
+  materialsStatus.textContent = "Preparing answer from your selected source...";
   try {
     const response = await fetch("/api/materials/tutor", {
       method: "POST",
@@ -1690,11 +2204,75 @@ askMaterialsButton.addEventListener("click", async () => {
     setActiveView("tutor");
     appendMessage("user", `[Materials] ${query}`);
     appendMessage("agent", data.answer);
-    materialsStatus.textContent = "Grounded answer ready.";
+    materialsStatus.textContent = "Answer is ready in Tutor.";
     await refreshLearnerState();
     await refreshInsights();
   } catch (error) {
     materialsStatus.textContent = error.message;
+  }
+});
+
+createMaterialsMockTestButton.addEventListener("click", async () => {
+  setActiveView("materials");
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+
+  if (!selectedMaterialIds.size) {
+    materialsStatus.textContent = "Choose 1 source first.";
+    return;
+  }
+
+  const sampleStyleFile = materialsMockStyleFileInput.files?.[0] || null;
+  createMaterialsMockTestButton.disabled = true;
+  materialsStatus.textContent = "Creating mock test from your material...";
+  try {
+    const sampleStyleFromFile = sampleStyleFile ? await readFileAsText(sampleStyleFile) : "";
+    const sampleStylePayload = [
+      materialsMockStyleInput.value.trim(),
+      sampleStyleFile ? `Uploaded sample exam: ${sampleStyleFile.name}` : "",
+      sampleStyleFromFile.trim(),
+    ].filter(Boolean).join("\n\n");
+
+    const response = await fetch("/api/materials/mock-test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        materialIds: [...selectedMaterialIds],
+        topic: materialQueryInput.value.trim(),
+        level: diagnosticLevelSelect.value,
+        goal: "Practice from uploaded materials",
+        questionCount: 5,
+        structure: materialsMockStructureInput.value.trim(),
+        sampleStyle: sampleStylePayload,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not create mock test.");
+    }
+
+    activeAssessment = data;
+    renderAssessmentQuestions(data.questions || []);
+    diagnosticResult.classList.add("hidden");
+    diagnosticForm.classList.remove("hidden");
+    updateAssessmentActions();
+    diagnosticTopicInput.value = data.topic || diagnosticTopicInput.value;
+    assessmentStatus.textContent = "Mock test ready from your materials.";
+    materialsStatus.textContent = "Mock test opened in Plan.";
+    materialsMockStyleFileInput.value = "";
+    setActiveView("plan");
+    diagnosticForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    materialsStatus.textContent = error.message;
+  } finally {
+    createMaterialsMockTestButton.disabled = false;
   }
 });
 
@@ -1741,6 +2319,7 @@ startDiagnosticButton.addEventListener("click", async () => {
     activeAssessment = data;
     renderAssessmentQuestions(data.questions || []);
     diagnosticForm.classList.remove("hidden");
+    updateAssessmentActions();
     assessmentStatus.textContent = `Diagnostic ready: ${data.question_count} questions on ${data.topic}.`;
   } catch (error) {
     assessmentStatus.textContent = error.message;
@@ -1759,9 +2338,16 @@ diagnosticForm.addEventListener("submit", async (event) => {
 
   const answers = {};
   for (const question of activeAssessment.questions || []) {
-    const selected = diagnosticForm.querySelector(`input[name="${question.question_id}"]:checked`);
-    if (selected) {
-      answers[question.question_id] = selected.value;
+    if ((question.question_type || "multiple_choice") === "multiple_choice") {
+      const selected = diagnosticForm.querySelector(`input[name="${question.question_id}"]:checked`);
+      if (selected) {
+        answers[question.question_id] = selected.value;
+      }
+    } else {
+      const textAnswer = diagnosticForm.querySelector(`[name="${question.question_id}"]`);
+      if (textAnswer?.value?.trim()) {
+        answers[question.question_id] = textAnswer.value.trim();
+      }
     }
   }
 
@@ -1794,6 +2380,7 @@ diagnosticForm.addEventListener("submit", async (event) => {
     assessmentStatus.textContent = data.result.recommended_next_action;
     diagnosticForm.classList.add("hidden");
     activeAssessment = null;
+    updateAssessmentActions();
     await refreshLearnerState();
     await refreshMasteryBoard();
     await refreshRoadmap();
@@ -1899,6 +2486,26 @@ materialsLibrary.addEventListener("change", (event) => {
     selectedMaterialIds.delete(checkbox.dataset.materialId);
   }
   updateMaterialsSelectionSummary();
+});
+
+materialsLibrary.addEventListener("click", async (event) => {
+  const toggleButton = event.target.closest("[data-toggle-previous-resources]");
+  if (toggleButton) {
+    previousResourcesExpanded = !previousResourcesExpanded;
+    renderMaterials(latestMaterials);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-material]");
+  if (!deleteButton) {
+    return;
+  }
+
+  await deleteMaterial(deleteButton.dataset.deleteMaterial);
+});
+
+deleteAllMaterialsButton.addEventListener("click", async () => {
+  await deleteAllMaterials();
 });
 
 demoPersonasBoard.addEventListener("click", (event) => {
