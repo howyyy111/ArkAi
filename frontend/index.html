@@ -31,7 +31,7 @@
           <p class="section-label">Focused learning</p>
           <h2>One clear workspace, one step at a time.</h2>
           <p id="overview-blurb" class="state-summary">
-            Track mastery, roadmap momentum, grounded materials, and intervention risk from one place.
+            Learn, plan, and review in one place.
           </p>
         </div>
         <div class="hero-actions">
@@ -53,12 +53,12 @@
           <article class="metric-card">
             <p class="section-label">Materials</p>
             <h3 id="overview-materials">0</h3>
-            <p id="overview-materials-caption" class="state-summary">Upload notes or images for grounding.</p>
+            <p id="overview-materials-caption" class="state-summary">No materials yet.</p>
           </article>
           <article class="metric-card">
             <p class="section-label">Risk</p>
             <h3 id="overview-risk">Unknown</h3>
-            <p id="overview-risk-caption" class="state-summary">Refresh insights to evaluate learner risk.</p>
+            <p id="overview-risk-caption" class="state-summary">No insight yet.</p>
           </article>
         </div>
       </section>
@@ -67,57 +67,63 @@
         <section class="focus-rail" aria-label="Workspace sections">
           <div class="focus-rail-copy">
             <p class="section-label">Workspace</p>
-            <h3>Choose one focus area.</h3>
-            <p class="state-summary">Keep the interface calm by opening only the section you need right now.</p>
+            <h3>Pick a view.</h3>
+            <p class="state-summary">Focus on one task at a time.</p>
           </div>
           <div class="focus-tabs">
             <button class="focus-tab is-active" type="button" data-view-target="tutor">
               <strong>Tutor</strong>
-              <span>Chat, guidance, and current learner state.</span>
+              <span>Chat and guidance.</span>
             </button>
             <button class="focus-tab" type="button" data-view-target="plan">
               <strong>Plan</strong>
-              <span>Diagnostic first, then build the roadmap.</span>
+              <span>Diagnostic and roadmap.</span>
             </button>
             <button class="focus-tab" type="button" data-view-target="materials">
               <strong>Materials</strong>
-              <span>Upload notes and ask grounded questions.</span>
+              <span>Upload and ask.</span>
             </button>
             <button class="focus-tab" type="button" data-view-target="insights">
               <strong>Insights</strong>
-              <span>Review progress, reports, and secondary tools.</span>
+              <span>Progress and reports.</span>
             </button>
           </div>
         </section>
 
         <div class="focus-content">
           <section class="focus-view is-active" data-view="tutor">
-            <section class="state-strip panel-lite" aria-live="polite">
-              <div>
-                <p class="section-label">Learner state</p>
-                <h3 id="state-title">New learner</h3>
-              </div>
-              <p id="state-summary" class="state-summary">
-                Sign in to start building your long-term learner profile.
-              </p>
-            </section>
+            <div class="tutor-top">
+              <section class="state-strip panel-lite" aria-live="polite">
+                <div>
+                  <p class="section-label">Learner state</p>
+                  <h3 id="state-title">New learner</h3>
+                </div>
+                <p id="state-summary" class="state-summary">
+                  Sign in to begin.
+                </p>
+              </section>
 
-            <section class="content-card panel-lite helper-card">
-              <div class="helper-grid">
-                <article class="helper-item">
-                  <strong>Start here</strong>
-                  <p>Use Tutor when the learner needs help right away.</p>
-                </article>
-                <article class="helper-item">
-                  <strong>Then open Plan</strong>
-                  <p>Run a diagnostic after the topic and goal are clear.</p>
-                </article>
-                <article class="helper-item">
-                  <strong>Use Materials later</strong>
-                  <p>Keep uploads separate so the main flow stays clean.</p>
-                </article>
-              </div>
-            </section>
+              <section class="content-card panel-lite helper-card">
+                <div class="helper-header">
+                  <p class="section-label">Flow</p>
+                  <p class="state-summary">Chat first. Plan next.</p>
+                </div>
+                <div class="helper-grid">
+                  <article class="helper-item">
+                    <strong>Start</strong>
+                    <p>Ask the tutor.</p>
+                  </article>
+                  <article class="helper-item">
+                    <strong>Plan</strong>
+                    <p>Run a diagnostic.</p>
+                  </article>
+                  <article class="helper-item">
+                    <strong>Ground</strong>
+                    <p>Add notes later.</p>
+                  </article>
+                </div>
+              </section>
+            </div>
 
             <section id="study-console" class="chat-panel panel-lite">
               <div class="chat-panel-header">
@@ -125,25 +131,8 @@
                   <p class="section-label">Tutor chat</p>
                   <h3>Ask, practice, adapt</h3>
                 </div>
-                <p class="state-summary">Use chat as the main starting point when the learner is unsure where to begin.</p>
+                <p class="state-summary">A calm place to start learning.</p>
               </div>
-
-              <div id="messages" class="messages" aria-live="polite">
-                <div class="empty-state">
-                  Let's begin your journey.
-                </div>
-              </div>
-
-              <form id="chat-form" class="composer">
-                <div class="composer-inner">
-                  <textarea id="prompt" name="prompt" rows="1"
-                    placeholder="Example: Teach me Python loops in 15 minutes with one exercise."></textarea>
-                  <button id="submit-button" class="primary-button" type="submit">
-                    <span class="button-text">Send</span>
-                    <span class="button-loader" aria-hidden="true"></span>
-                  </button>
-                </div>
-              </form>
 
               <div class="voice-strip">
                 <button id="voice-input-button" class="ghost-button" type="button">Start voice input</button>
@@ -154,6 +143,25 @@
                 </label>
                 <span id="voice-status" class="state-summary">Voice mode idle.</span>
               </div>
+
+              <div class="chat-stage">
+                <div id="messages" class="messages" aria-live="polite">
+                  <div class="empty-state">
+                    Let's begin your journey.
+                  </div>
+                </div>
+              </div>
+
+              <form id="chat-form" class="composer">
+                <div class="composer-inner">
+                  <textarea id="prompt" name="prompt" rows="1"
+                    placeholder="Ask anything about the topic you're learning."></textarea>
+                  <button id="submit-button" class="primary-button" type="submit">
+                    <span class="button-text">Send</span>
+                    <span class="button-loader" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </form>
             </section>
           </section>
 
@@ -192,7 +200,7 @@
                 </div>
 
                 <div id="assessment-status" class="assessment-status">
-                  Generate a short diagnostic to measure starting level and update mastery.
+                  Start a quick diagnostic.
                 </div>
 
                 <form id="diagnostic-form" class="diagnostic-form hidden">
@@ -204,11 +212,11 @@
 
                 <div class="mastery-board">
                   <div>
-                    <p class="section-label">Mastery snapshot</p>
+                    <p class="section-label">Progress</p>
                     <h4 id="mastery-score">0%</h4>
                   </div>
                   <div id="mastery-topics" class="mastery-topics">
-                    <p class="mastery-empty">No mastery data yet. Complete a diagnostic to populate this.</p>
+                    <p class="mastery-empty">No previous sessions yet.</p>
                   </div>
                 </div>
               </section>
@@ -245,7 +253,7 @@
                 </div>
 
                 <div id="roadmap-status" class="assessment-status">
-                  Generate a study roadmap with milestones and checkpoint sessions.
+                  Build a roadmap.
                 </div>
 
                 <div class="mastery-board">
@@ -254,12 +262,16 @@
                     <h4 id="roadmap-mode">No roadmap yet</h4>
                   </div>
                   <div id="roadmap-summary" class="state-summary">
-                    Your roadmap will appear here after generation.
+                    Roadmap will appear here.
                   </div>
                 </div>
 
+                <div id="roadmap-session-detail" class="roadmap-session-detail nested-card">
+                  Select a session to see what to study next.
+                </div>
+
                 <div id="roadmap-board" class="roadmap-board">
-                  <p class="mastery-empty">No roadmap data yet. Create one to see milestones and sessions.</p>
+                  <p class="mastery-empty">No roadmap yet.</p>
                 </div>
               </section>
             </div>
@@ -290,12 +302,12 @@
                 </label>
                 <label>
                   <span>Selected sources</span>
-                  <div id="materials-selection-summary" class="state-summary field-note">No materials selected yet.</div>
+                  <div id="materials-selection-summary" class="state-summary field-note">No materials selected.</div>
                 </label>
               </div>
 
               <div id="materials-status" class="assessment-status">
-                Upload notes or screenshots, then ask grounded questions from selected materials.
+                Upload notes, then ask.
               </div>
 
               <div class="inline-actions">
@@ -303,7 +315,7 @@
               </div>
 
               <div id="materials-library" class="materials-library">
-                <p class="mastery-empty">No materials yet. Upload a file or pasted text to begin.</p>
+                <p class="mastery-empty">No materials yet.</p>
               </div>
             </section>
           </section>
@@ -328,16 +340,16 @@
                     <h4 id="intervention-risk">Unknown</h4>
                   </div>
                   <div id="intervention-summary" class="state-summary">
-                    Refresh insights to see learner risk level and recommended interventions.
+                    Refresh to load insights.
                   </div>
                 </div>
 
                 <div id="evaluation-board" class="materials-library">
-                  <p class="mastery-empty">No evaluation snapshot yet.</p>
+                  <p class="mastery-empty">No evaluation yet.</p>
                 </div>
 
                 <div id="report-board" class="materials-library">
-                  <p class="mastery-empty">No weekly report generated yet.</p>
+                  <p class="mastery-empty">No report yet.</p>
                 </div>
               </section>
 
@@ -366,12 +378,12 @@
                         <h4 id="system-stack-title">Checking...</h4>
                       </div>
                       <div id="system-stack-summary" class="state-summary">
-                        Loading deployment and Google-native readiness details.
+                        Loading system status.
                       </div>
                     </div>
 
                     <div id="system-readiness-board" class="materials-library">
-                      <p class="mastery-empty">No system status loaded yet.</p>
+                      <p class="mastery-empty">No system status yet.</p>
                     </div>
                   </section>
 
@@ -390,7 +402,7 @@
                         <h4 id="demo-pitch-title">Adaptive learning companion</h4>
                       </div>
                       <div id="demo-pitch-copy" class="state-summary">
-                        Loading product pitch and demo story.
+                        Loading demo notes.
                       </div>
                     </div>
 
@@ -399,11 +411,11 @@
                     </div>
 
                     <div id="demo-personas-board" class="materials-library">
-                      <p class="mastery-empty">No demo personas loaded yet.</p>
+                      <p class="mastery-empty">No demo personas yet.</p>
                     </div>
 
                     <div id="demo-script-board" class="materials-library">
-                      <p class="mastery-empty">No demo script loaded yet.</p>
+                      <p class="mastery-empty">No demo script yet.</p>
                     </div>
                   </section>
                 </div>

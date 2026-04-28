@@ -1657,6 +1657,7 @@ def get_learner_state(user_id: str) -> dict[str, Any]:
         "profile": profile,
         "current_topic": current_topic,
         "completed_activities": completed_activities,
+        "recent_history": history[:10],
         "recent_topics": recent_topics[:5],
         "weak_topics": weak_topics,
         "latest_activity": latest_activity,

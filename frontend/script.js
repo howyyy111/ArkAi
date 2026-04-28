@@ -42,6 +42,7 @@ const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
 const roadmapStatus = document.getElementById("roadmap-status");
 const roadmapMode = document.getElementById("roadmap-mode");
 const roadmapSummary = document.getElementById("roadmap-summary");
+const roadmapSessionDetail = document.getElementById("roadmap-session-detail");
 const roadmapBoard = document.getElementById("roadmap-board");
 const materialFileInput = document.getElementById("material-file");
 const materialTextInput = document.getElementById("material-text");
@@ -95,6 +96,7 @@ let firebaseAuthClient = null;
 let googleProvider = null;
 let activeAssessment = null;
 let activeRoadmap = null;
+let activeRoadmapSummary = null;
 let selectedMaterialIds = new Set();
 let lastAgentReply = "";
 let speechRecognition = null;
@@ -103,6 +105,97 @@ let pendingInputMode = "text";
 let latestLearnerState = null;
 let latestMaterials = [];
 let latestInterventionPlan = null;
+let selectedRoadmapSessionKey = "";
+let previousSessionsExpanded = false;
+let selectedHistoryItemKey = "";
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function buildHistoryItemKey(item) {
+  return `${item.created_at || "time"}::${item.topic || "topic"}::${item.activity_type || "activity"}`;
+}
+
+function formatRelativeDays(value) {
+  if (!value) {
+    return "recently";
+  }
+
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) {
+    return "recently";
+  }
+
+  const diffMs = Date.now() - then.getTime();
+  const diffDays = Math.max(0, Math.round(diffMs / 86400000));
+  if (diffDays <= 0) {
+    return "today";
+  }
+  if (diffDays === 1) {
+    return "1 day ago";
+  }
+  return `${diffDays} days ago`;
+}
+
+function getPreviousSessions() {
+  return (latestLearnerState?.recent_history || [])
+    .filter((item) => item?.topic)
+    .map((item) => ({ ...item, key: buildHistoryItemKey(item) }));
+}
+
+function findHistoryItemByKey(key) {
+  return getPreviousSessions().find((item) => item.key === key) || null;
+}
+
+function buildDetailFromHistoryItem(item) {
+  const topic = item.topic || "Previous session";
+  const title = `${topic} session`;
+  const score = typeof item.score === "number" ? `${Math.round(item.score * 100)}%` : null;
+  const status = item.activity_type || "session";
+  const note = item.notes || `Reopen ${topic} and continue from the last saved step.`;
+
+  return {
+    key: item.key,
+    title,
+    focus: topic,
+    duration_minutes: "",
+    due_date: formatRelativeDays(item.created_at),
+    phaseTitle: "Previous session",
+    phaseGoal: topic,
+    phaseOutcome: note,
+    status: score ? `${status} • ${score}` : status,
+    sourceLabel: "Previous session",
+  };
+}
+
+function buildDetailFromRoadmapSession(session) {
+  return {
+    ...session,
+    sourceLabel: "Selected session",
+  };
+}
+
+function getActiveSessionDetail() {
+  if (selectedHistoryItemKey) {
+    const historyItem = findHistoryItemByKey(selectedHistoryItemKey);
+    if (historyItem) {
+      return buildDetailFromHistoryItem(historyItem);
+    }
+  }
+
+  const selectedSession =
+    findRoadmapSessionByKey(activeRoadmap, selectedRoadmapSessionKey)
+    || findNextRoadmapSession(activeRoadmap)
+    || findFirstRoadmapSession(activeRoadmap);
+
+  return selectedSession ? buildDetailFromRoadmapSession(selectedSession) : null;
+}
 
 function setActiveView(viewName) {
   const nextView = String(viewName || "tutor").trim() || "tutor";
@@ -215,7 +308,7 @@ async function refreshLearnerState() {
   if (!username) {
     latestLearnerState = null;
     stateTitle.textContent = "New learner";
-    stateSummary.textContent = "Sign in to start building your long-term learner profile.";
+    stateSummary.textContent = "Sign in to begin.";
     refreshOverview();
     return;
   }
@@ -267,25 +360,38 @@ function renderMasteryBoard(mastery) {
   const overall = typeof mastery?.overall_score === "number" ? mastery.overall_score : 0;
   masteryScore.textContent = `${Math.round(overall * 100)}%`;
 
-  const topics = mastery?.topics || [];
-  if (!topics.length) {
-    masteryTopics.innerHTML = `<p class="mastery-empty">No mastery data yet. Complete a diagnostic to populate this.</p>`;
+  const sessions = getPreviousSessions();
+  if (!sessions.length) {
+    masteryTopics.innerHTML = `<p class="mastery-empty">No previous sessions yet.</p>`;
     return;
   }
 
-  masteryTopics.innerHTML = topics
-    .slice(0, 4)
-    .map((topic) => {
-      const score = Math.round((topic.score || 0) * 100);
-      return `
-        <article class="mastery-topic">
-          <strong>${topic.topic}</strong>
-          <p>${topic.label} • ${score}% • ${topic.assessments_taken || 0} assessments</p>
-          <div class="mastery-bar"><span style="width: ${score}%"></span></div>
-        </article>
-      `;
-    })
-    .join("");
+  const selectedHistoryItem = findHistoryItemByKey(selectedHistoryItemKey) || sessions[0];
+  if (!selectedHistoryItemKey) {
+    selectedHistoryItemKey = "";
+  }
+
+  masteryTopics.innerHTML = `
+    <button class="ghost-button history-toggle" type="button" data-history-toggle="true">
+      Previous sessions
+    </button>
+    ${previousSessionsExpanded ? `
+      <div class="history-list">
+        ${sessions
+          .map((item) => `
+            <button
+              class="history-item${selectedHistoryItem?.key === item.key ? " is-selected" : ""}"
+              type="button"
+              data-history-item="${escapeHtml(item.key)}"
+            >
+              <strong>${escapeHtml(item.topic)}</strong>
+              <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
+            </button>
+          `)
+          .join("")}
+      </div>
+    ` : ""}
+  `;
 }
 
 async function refreshMasteryBoard() {
@@ -309,38 +415,308 @@ async function refreshMasteryBoard() {
   }
 }
 
+masteryTopics.addEventListener("click", (event) => {
+  const toggleButton = event.target.closest("[data-history-toggle]");
+  if (toggleButton) {
+    previousSessionsExpanded = !previousSessionsExpanded;
+    renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
+    return;
+  }
+
+  const historyButton = event.target.closest("[data-history-item]");
+  if (!historyButton) {
+    return;
+  }
+
+  selectedHistoryItemKey = historyButton.dataset.historyItem || "";
+  const historyItem = findHistoryItemByKey(selectedHistoryItemKey);
+  const matchingRoadmapSession = findRoadmapSessionByTopic(activeRoadmap, historyItem?.topic || "");
+  selectedRoadmapSessionKey = matchingRoadmapSession?.key || selectedRoadmapSessionKey;
+
+  renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
+  renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+  roadmapStatus.textContent = "Previous session loaded below.";
+  roadmapSessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
+function buildRoadmapSessionKey(phaseId, sessionId) {
+  return `${phaseId || "phase"}::${sessionId || "session"}`;
+}
+
+function normalizeRoadmapSession(phase, session) {
+  return {
+    ...session,
+    key: buildRoadmapSessionKey(phase.phase_id, session.session_id),
+    phaseId: phase.phase_id,
+    phaseTitle: phase.title,
+    phaseGoal: phase.goal,
+    phaseOutcome: phase.expected_outcome,
+  };
+}
+
+function findRoadmapSessionByKey(roadmap, key) {
+  if (!roadmap || !key) {
+    return null;
+  }
+
+  for (const phase of roadmap.phases || []) {
+    for (const session of phase.sessions || []) {
+      const normalized = normalizeRoadmapSession(phase, session);
+      if (normalized.key === key) {
+        return normalized;
+      }
+    }
+  }
+  return null;
+}
+
+function findFirstRoadmapSession(roadmap) {
+  for (const phase of roadmap?.phases || []) {
+    const firstSession = (phase.sessions || [])[0];
+    if (firstSession) {
+      return normalizeRoadmapSession(phase, firstSession);
+    }
+  }
+  return null;
+}
+
+function findRoadmapSessionByTopic(roadmap, topic) {
+  const normalizedTopic = String(topic || "").trim().toLowerCase();
+  if (!roadmap || !normalizedTopic) {
+    return null;
+  }
+
+  for (const phase of roadmap.phases || []) {
+    for (const session of phase.sessions || []) {
+      const haystack = `${session.title || ""} ${session.focus || ""} ${phase.goal || ""}`.toLowerCase();
+      if (haystack.includes(normalizedTopic)) {
+        return normalizeRoadmapSession(phase, session);
+      }
+    }
+  }
+
+  return null;
+}
+
+function findNextRoadmapSession(roadmap) {
+  for (const phase of roadmap?.phases || []) {
+    for (const session of phase.sessions || []) {
+      if (session.status !== "completed") {
+        return normalizeRoadmapSession(phase, session);
+      }
+    }
+  }
+  return null;
+}
+
+function buildStudyPrompt(session) {
+  const bits = [
+    `Teach me this roadmap session now: ${session.title}.`,
+    session.focus ? `Topic: ${session.focus}.` : "",
+    session.phaseGoal ? `Phase goal: ${session.phaseGoal}.` : "",
+    session.duration_minutes ? `Keep it within ${session.duration_minutes} minutes.` : "",
+    "Give me a short explanation, one example, and one small exercise.",
+  ].filter(Boolean);
+  return bits.join(" ");
+}
+
+function openRoadmapSession(session) {
+  const prompt = buildStudyPrompt(session);
+  setActiveView("tutor");
+  promptInput.value = prompt;
+  roadmapStatus.textContent = `Opened ${session.title} in Tutor.`;
+  promptInput.focus();
+  promptInput.setSelectionRange(prompt.length, prompt.length);
+  promptInput.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function previewRoadmapSessionByKey(sessionKey, options = {}) {
+  const session = findRoadmapSessionByKey(activeRoadmap, sessionKey);
+  if (!session) {
+    return;
+  }
+
+  selectedHistoryItemKey = "";
+  selectedRoadmapSessionKey = session.key || "";
+  renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+
+  if (options.statusMessage) {
+    roadmapStatus.textContent = options.statusMessage;
+  }
+
+  if (options.scrollToDetail !== false) {
+    roadmapSessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+async function updateRoadmapSessionStatus(button) {
+  roadmapStatus.textContent = `Marking session ${button.dataset.status}...`;
+  try {
+    const response = await fetch("/api/roadmap/session/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: getUsername(),
+        idToken: getIdToken(),
+        phaseId: button.dataset.phaseId,
+        sessionId: button.dataset.sessionId,
+        status: button.dataset.status,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not update roadmap session.");
+    }
+    renderRoadmap(data);
+    roadmapStatus.textContent =
+      button.dataset.status === "completed"
+        ? "Session marked complete. The roadmap was updated."
+        : "Session marked missed. The roadmap was updated.";
+    roadmapStatus.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    await refreshLearnerState();
+    await refreshMasteryBoard();
+    await refreshInsights();
+  } catch (error) {
+    roadmapStatus.textContent = error.message;
+  }
+}
+
+function renderRoadmapSessionDetail(session) {
+  if (!session) {
+    roadmapSessionDetail.innerHTML = "Select a session to see what to study next.";
+    return;
+  }
+
+  const durationText = session.duration_minutes ? `${session.duration_minutes} min` : "";
+  const dueText = session.due_date ? (String(session.due_date).includes("ago") || session.due_date === "today" ? session.due_date : `Due ${session.due_date}`) : "";
+  const focusText = session.focus || session.phaseGoal || "Study focus";
+  const explanation = session.phaseOutcome
+    ? session.phaseOutcome
+    : `Use this session to build confidence in ${focusText.toLowerCase()}.`;
+
+  roadmapSessionDetail.innerHTML = `
+    <div class="roadmap-detail-head">
+      <div>
+        <p class="section-label">${escapeHtml(session.sourceLabel || "Selected session")}</p>
+        <h5>${escapeHtml(session.title)}</h5>
+      </div>
+      ${(durationText || dueText) ? `
+        <div class="roadmap-detail-kicker">
+          ${durationText ? `${escapeHtml(durationText)}<br />` : ""}
+          ${dueText ? escapeHtml(dueText) : ""}
+        </div>
+      ` : ""}
+    </div>
+    <p class="roadmap-detail-copy">${escapeHtml(explanation)}</p>
+    <div class="roadmap-detail-meta">
+      <span class="status-pill subtle">${escapeHtml(focusText)}</span>
+      <span class="status-pill">${escapeHtml(session.phaseTitle || "Roadmap step")}</span>
+      <span class="status-pill">${escapeHtml(session.status || "planned")}</span>
+    </div>
+    <div class="roadmap-detail-steps">
+      <strong>What to do</strong>
+      <p>Open Tutor, learn this topic, do one short exercise, then come back here and mark the session complete.</p>
+    </div>
+    <div class="inline-actions">
+      <button
+        class="primary-button"
+        type="button"
+        data-open-session="true"
+        data-session-key="${escapeHtml(session.key || "")}"
+        data-session-title="${escapeHtml(session.title)}"
+        data-session-focus="${escapeHtml(session.focus || "")}"
+        data-session-duration="${escapeHtml(session.duration_minutes || "")}"
+        data-phase-title="${escapeHtml(session.phaseTitle || "")}"
+        data-phase-goal="${escapeHtml(session.phaseGoal || "")}"
+      >
+        Open in Tutor
+      </button>
+    </div>
+  `;
+}
+
 function renderRoadmap(roadmapResult) {
   const roadmap = roadmapResult?.roadmap || null;
   const summary = roadmapResult?.summary || null;
   activeRoadmap = roadmap;
+  activeRoadmapSummary = summary;
 
   if (!roadmap || !summary) {
     roadmapMode.textContent = "No roadmap yet";
-    roadmapSummary.textContent = "Your roadmap will appear here after generation.";
-    roadmapBoard.innerHTML = `<p class="mastery-empty">No roadmap data yet. Create one to see milestones and sessions.</p>`;
+    roadmapSummary.textContent = "Roadmap will appear here.";
+    renderRoadmapSessionDetail(getActiveSessionDetail());
+    roadmapBoard.innerHTML = `<p class="mastery-empty">No roadmap yet.</p>`;
     return;
   }
 
+  const nextRoadmapSession = findNextRoadmapSession(roadmap);
+  const selectedSession =
+    findRoadmapSessionByKey(roadmap, selectedRoadmapSessionKey)
+    || nextRoadmapSession
+    || findFirstRoadmapSession(roadmap);
+
+  selectedRoadmapSessionKey = selectedSession?.key || "";
   roadmapMode.textContent = `${summary.mode} mode`;
-  const nextSession = summary.next_session?.title ? `Next: ${summary.next_session.title}` : "All sessions currently updated.";
-  roadmapSummary.textContent =
+  const progressText =
     `${summary.completed_sessions}/${summary.total_sessions} sessions completed • ` +
-    `${summary.missed_sessions} missed • ${Math.round((summary.completion_rate || 0) * 100)}% complete • ` +
-    `${nextSession}` +
-    (summary.revision_reason ? ` • revision: ${summary.revision_reason}` : "");
+    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+  if (nextRoadmapSession) {
+    roadmapSummary.innerHTML = `
+      <div class="roadmap-next-action">
+        <div>
+          <strong>Next up</strong>
+          <p>${escapeHtml(nextRoadmapSession.title)} • Open the brief, then continue in Tutor.</p>
+        </div>
+        <button
+          class="ghost-button roadmap-open-button"
+          type="button"
+          data-preview-session="true"
+          data-session-key="${escapeHtml(nextRoadmapSession.key)}"
+          data-session-title="${escapeHtml(nextRoadmapSession.title)}"
+          data-session-focus="${escapeHtml(nextRoadmapSession.focus || "")}"
+          data-session-duration="${escapeHtml(nextRoadmapSession.duration_minutes || "")}"
+          data-phase-title="${escapeHtml(nextRoadmapSession.phaseTitle || "")}"
+          data-phase-goal="${escapeHtml(nextRoadmapSession.phaseGoal || "")}"
+        >
+          Open brief
+        </button>
+      </div>
+      <p class="roadmap-progress-copy">${escapeHtml(progressText)}</p>
+    `;
+  } else {
+    roadmapSummary.innerHTML = `<p class="roadmap-progress-copy">${escapeHtml(progressText)} • All sessions are done.</p>`;
+  }
 
   roadmapBoard.innerHTML = roadmap.phases
     .map((phase) => {
       const sessionsMarkup = (phase.sessions || [])
         .map(
           (session) => `
-            <article class="roadmap-session">
+            <article
+              class="roadmap-session${buildRoadmapSessionKey(phase.phase_id, session.session_id) === selectedRoadmapSessionKey ? " is-selected" : ""}"
+              tabindex="0"
+              role="button"
+              aria-label="Open ${escapeHtml(session.title)} brief"
+              data-preview-session="true"
+              data-session-key="${escapeHtml(buildRoadmapSessionKey(phase.phase_id, session.session_id))}"
+            >
               <div>
                 <strong>${session.title}</strong>
                 <p>${session.focus} • ${session.duration_minutes} min • due ${session.due_date}</p>
                 <p>Status: ${session.status}</p>
               </div>
               <div class="roadmap-session-actions">
+                <button
+                  class="mini-button"
+                  type="button"
+                  data-preview-session="true"
+                  data-session-key="${escapeHtml(buildRoadmapSessionKey(phase.phase_id, session.session_id))}"
+                >
+                  View brief
+                </button>
                 <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="completed">Mark completed</button>
                 <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="missed">Mark missed</button>
               </div>
@@ -367,6 +743,8 @@ function renderRoadmap(roadmapResult) {
       `;
     })
     .join("");
+
+  renderRoadmapSessionDetail(getActiveSessionDetail());
 }
 
 async function refreshRoadmap() {
@@ -393,16 +771,16 @@ async function refreshRoadmap() {
 
 function updateMaterialsSelectionSummary() {
   if (!selectedMaterialIds.size) {
-    materialsSelectionSummary.textContent = "No materials selected yet.";
+    materialsSelectionSummary.textContent = "No materials selected.";
     return;
   }
-  materialsSelectionSummary.textContent = `${selectedMaterialIds.size} material(s) selected for grounded tutoring and chat context.`;
+  materialsSelectionSummary.textContent = `${selectedMaterialIds.size} selected.`;
 }
 
 function renderMaterials(materials = []) {
   latestMaterials = materials;
   if (!materials.length) {
-    materialsLibrary.innerHTML = `<p class="mastery-empty">No materials yet. Upload a file or pasted text to begin.</p>`;
+    materialsLibrary.innerHTML = `<p class="mastery-empty">No materials yet.</p>`;
     updateMaterialsSelectionSummary();
     refreshOverview();
     return;
@@ -459,7 +837,7 @@ async function refreshMaterials() {
 
 function renderEvaluationSnapshot(snapshot) {
   if (!snapshot) {
-    evaluationBoard.innerHTML = `<p class="mastery-empty">No evaluation snapshot yet.</p>`;
+    evaluationBoard.innerHTML = `<p class="mastery-empty">No evaluation yet.</p>`;
     return;
   }
   evaluationBoard.innerHTML = `
@@ -483,7 +861,7 @@ function renderInterventionPlan(plan) {
   latestInterventionPlan = plan;
   if (!plan) {
     interventionRisk.textContent = "Unknown";
-    interventionSummary.textContent = "Refresh insights to see learner risk level and recommended interventions.";
+    interventionSummary.textContent = "Refresh to load insights.";
     refreshOverview();
     return;
   }
@@ -494,7 +872,7 @@ function renderInterventionPlan(plan) {
 
 function renderWeeklyReport(report) {
   if (!report) {
-    reportBoard.innerHTML = `<p class="mastery-empty">No weekly report generated yet.</p>`;
+    reportBoard.innerHTML = `<p class="mastery-empty">No report yet.</p>`;
     return;
   }
   reportBoard.innerHTML = `
@@ -557,22 +935,22 @@ function refreshOverview() {
   overviewMaterials.textContent = `${latestMaterials.length}`;
   overviewMaterialsCaption.textContent = latestMaterials.length
     ? `${selectedMaterialIds.size} selected for grounding`
-    : "Upload notes or images for grounding.";
+    : "No materials yet.";
 
   overviewRisk.textContent = latestInterventionPlan?.risk_level || "Unknown";
   overviewRiskCaption.textContent = latestInterventionPlan?.triggers?.length
     ? latestInterventionPlan.triggers.join(" • ")
-    : "Refresh insights to evaluate learner risk.";
+    : "No insight yet.";
 
   overviewBlurb.textContent = latestLearnerState?.recommended_next_action
-    || "Track mastery, roadmap momentum, grounded materials, and intervention risk from one place.";
+    || "Learn, plan, and review in one place.";
 }
 
 function renderSystemStatus(status) {
   if (!status) {
     systemStackTitle.textContent = "Unavailable";
-    systemStackSummary.textContent = "System status could not be loaded.";
-    systemReadinessBoard.innerHTML = `<p class="mastery-empty">No system status loaded yet.</p>`;
+    systemStackSummary.textContent = "Could not load status.";
+    systemReadinessBoard.innerHTML = `<p class="mastery-empty">No system status yet.</p>`;
     return;
   }
 
@@ -636,10 +1014,10 @@ async function refreshSystemStatus() {
 
 function renderDemoKit(demoKit) {
   if (!demoKit) {
-    demoPitchCopy.textContent = "Demo kit unavailable.";
+    demoPitchCopy.textContent = "Demo unavailable.";
     demoMetricsBoard.innerHTML = `<p class="mastery-empty">No demo metrics yet.</p>`;
-    demoPersonasBoard.innerHTML = `<p class="mastery-empty">No demo personas loaded yet.</p>`;
-    demoScriptBoard.innerHTML = `<p class="mastery-empty">No demo script loaded yet.</p>`;
+    demoPersonasBoard.innerHTML = `<p class="mastery-empty">No demo personas yet.</p>`;
+    demoScriptBoard.innerHTML = `<p class="mastery-empty">No demo script yet.</p>`;
     return;
   }
 
@@ -680,7 +1058,7 @@ function renderDemoKit(demoKit) {
         </article>
       `
     )
-    .join("") || `<p class="mastery-empty">No demo personas loaded yet.</p>`;
+    .join("") || `<p class="mastery-empty">No demo personas yet.</p>`;
 
   demoScriptBoard.innerHTML = (demoKit.demo_script || [])
     .map(
@@ -696,7 +1074,7 @@ function renderDemoKit(demoKit) {
         </article>
       `
     )
-    .join("") || `<p class="mastery-empty">No demo script loaded yet.</p>`;
+    .join("") || `<p class="mastery-empty">No demo script yet.</p>`;
 }
 
 async function refreshDemoKit() {
@@ -1426,39 +1804,88 @@ diagnosticForm.addEventListener("submit", async (event) => {
 });
 
 roadmapBoard.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-phase-id][data-session-id][data-status]");
-  if (!button) {
+  const openButton = event.target.closest("[data-open-session]");
+  if (openButton) {
+    openRoadmapSession({
+      title: openButton.dataset.sessionTitle,
+      focus: openButton.dataset.sessionFocus,
+      duration_minutes: openButton.dataset.sessionDuration,
+      phaseTitle: openButton.dataset.phaseTitle,
+      phaseGoal: openButton.dataset.phaseGoal,
+    });
     return;
   }
 
-  roadmapStatus.textContent = "Updating roadmap session...";
-  try {
-    const response = await fetch("/api/roadmap/session/update", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildAuthHeaders(),
-      },
-      body: JSON.stringify({
-        userId: getUsername(),
-        idToken: getIdToken(),
-        phaseId: button.dataset.phaseId,
-        sessionId: button.dataset.sessionId,
-        status: button.dataset.status,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status !== "success") {
-      throw new Error(data.error || data.message || "Could not update roadmap session.");
-    }
-    renderRoadmap(data);
-    roadmapStatus.textContent = data.message || "Roadmap updated.";
-    await refreshLearnerState();
-    await refreshMasteryBoard();
-    await refreshInsights();
-  } catch (error) {
-    roadmapStatus.textContent = error.message;
+  const button = event.target.closest("[data-phase-id][data-session-id][data-status]");
+  if (button) {
+    await updateRoadmapSessionStatus(button);
+    return;
   }
+
+  const previewButton = event.target.closest("[data-preview-session]");
+  if (previewButton) {
+    previewRoadmapSessionByKey(previewButton.dataset.sessionKey, {
+      statusMessage: "Session brief updated below.",
+    });
+    return;
+  }
+});
+
+roadmapSummary.addEventListener("click", (event) => {
+  const openButton = event.target.closest("[data-open-session]");
+  if (openButton) {
+    openRoadmapSession({
+      title: openButton.dataset.sessionTitle,
+      focus: openButton.dataset.sessionFocus,
+      duration_minutes: openButton.dataset.sessionDuration,
+      phaseTitle: openButton.dataset.phaseTitle,
+      phaseGoal: openButton.dataset.phaseGoal,
+    });
+    return;
+  }
+
+  const previewButton = event.target.closest("[data-preview-session]");
+  if (!previewButton) {
+    return;
+  }
+  previewRoadmapSessionByKey(previewButton.dataset.sessionKey, {
+    statusMessage: "Session brief updated below.",
+  });
+});
+
+roadmapBoard.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  if (event.target.closest("[data-phase-id][data-session-id][data-status]")) {
+    return;
+  }
+
+  const sessionCard = event.target.closest("[data-preview-session]");
+  if (!sessionCard) {
+    return;
+  }
+
+  event.preventDefault();
+  previewRoadmapSessionByKey(sessionCard.dataset.sessionKey, {
+    statusMessage: "Session brief updated below.",
+  });
+});
+
+roadmapSessionDetail.addEventListener("click", (event) => {
+  const openButton = event.target.closest("[data-open-session]");
+  if (!openButton) {
+    return;
+  }
+
+  openRoadmapSession({
+    title: openButton.dataset.sessionTitle,
+    focus: openButton.dataset.sessionFocus,
+    duration_minutes: openButton.dataset.sessionDuration,
+    phaseTitle: openButton.dataset.phaseTitle,
+    phaseGoal: openButton.dataset.phaseGoal,
+  });
 });
 
 materialsLibrary.addEventListener("change", (event) => {

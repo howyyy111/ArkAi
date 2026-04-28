@@ -227,6 +227,13 @@ textarea {
   gap: 20px;
 }
 
+.tutor-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
 .focus-view {
   display: none;
 }
@@ -243,6 +250,13 @@ textarea {
   padding: 22px;
   display: grid;
   gap: 18px;
+}
+
+.helper-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chat-panel-header,
@@ -264,10 +278,20 @@ textarea {
 
 .chat-panel-header {
   gap: 8px;
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 1px solid rgba(28, 28, 28, 0.07);
+  padding-bottom: 12px;
+}
+
+.chat-panel-header .state-summary {
+  max-width: 240px;
+  text-align: right;
 }
 
 .state-strip {
   background: rgba(255, 255, 255, 0.7);
+  gap: 12px;
 }
 
 .state-summary,
@@ -387,14 +411,37 @@ textarea:focus {
 .material-card,
 .roadmap-session,
 .helper-item {
-  padding: 16px;
-  border-radius: 18px;
+  padding: 14px 16px;
+  border-radius: 16px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.66);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .helper-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.helper-item p {
+  margin: 0;
+}
+
+.chat-panel {
+  gap: 14px;
+}
+
+.voice-strip {
+  padding: 10px 12px;
+  border: 1px solid rgba(28, 28, 28, 0.07);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.chat-stage {
+  border: 1px solid rgba(28, 28, 28, 0.07);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.48);
+  padding: 14px;
 }
 
 .diagnostic-question h5,
@@ -431,6 +478,140 @@ textarea:focus {
   font-size: 0.9rem;
 }
 
+.roadmap-next-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.roadmap-next-action strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.roadmap-next-action p,
+.roadmap-progress-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.roadmap-open-button {
+  flex-shrink: 0;
+}
+
+.roadmap-session-detail {
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.roadmap-detail-head,
+.roadmap-detail-meta,
+.roadmap-detail-steps,
+.roadmap-session-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.roadmap-detail-head {
+  align-items: start;
+  justify-content: space-between;
+}
+
+.roadmap-detail-head h5,
+.roadmap-detail-copy,
+.roadmap-detail-steps p,
+.roadmap-detail-steps strong {
+  margin: 0;
+}
+
+.roadmap-detail-kicker {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.roadmap-detail-meta {
+  flex-wrap: wrap;
+}
+
+.roadmap-detail-steps {
+  flex-direction: column;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(23, 23, 23, 0.03);
+}
+
+.roadmap-session {
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+  cursor: pointer;
+}
+
+.roadmap-session:hover {
+  transform: translateY(-1px);
+}
+
+.roadmap-session:focus-visible {
+  outline: 2px solid rgba(23, 23, 23, 0.12);
+  outline-offset: 2px;
+}
+
+.roadmap-session.is-selected {
+  border-color: rgba(23, 23, 23, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 26px rgba(18, 18, 18, 0.05);
+}
+
+.roadmap-session-actions {
+  flex-wrap: wrap;
+}
+
+.history-toggle,
+.history-list {
+  width: 100%;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-item {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.history-item strong,
+.history-item span {
+  display: block;
+}
+
+.history-item strong {
+  margin-bottom: 4px;
+}
+
+.history-item span {
+  color: var(--muted);
+}
+
+.history-item:hover {
+  transform: translateY(-1px);
+}
+
+.history-item.is-selected {
+  border-color: rgba(23, 23, 23, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .mini-button[data-status="completed"] {
   background: rgba(72, 116, 79, 0.12);
 }
@@ -458,10 +639,10 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 440px;
+  min-height: 400px;
   max-height: 62vh;
   overflow-y: auto;
-  padding-right: 6px;
+  padding-right: 8px;
 }
 
 .empty-state {
@@ -632,15 +813,21 @@ textarea:focus {
   position: relative;
   flex: 1;
   display: flex;
+  border: 1px solid rgba(28, 28, 28, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 6px;
+  box-shadow: 0 12px 28px rgba(18, 18, 18, 0.04);
 }
 
 .composer-inner textarea {
   flex: 1;
+  border: 0;
   min-height: unset;
   resize: none;
-  padding: 18px 94px 18px 18px;
+  padding: 16px 94px 16px 14px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.94);
+  background: transparent;
 }
 
 #submit-button {
@@ -742,6 +929,7 @@ textarea:focus {
 }
 
 @media (max-width: 1120px) {
+  .tutor-top,
   .secondary-grid,
   .helper-grid {
     grid-template-columns: 1fr;
@@ -763,9 +951,19 @@ textarea:focus {
   .topbar-status,
   .hero-actions,
   .inline-actions,
-  .voice-strip {
+  .voice-strip,
+  .helper-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .chat-panel-header {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-panel-header .state-summary {
+    max-width: none;
+    text-align: left;
   }
 
   .overview-metrics,
@@ -773,6 +971,19 @@ textarea:focus {
   .assessment-grid-wide,
   .focus-tabs {
     grid-template-columns: 1fr;
+  }
+
+  .roadmap-next-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .roadmap-detail-head {
+    flex-direction: column;
+  }
+
+  .roadmap-detail-kicker {
+    text-align: left;
   }
 }
 
