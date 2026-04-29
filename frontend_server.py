@@ -325,26 +325,80 @@ def _extract_text(content: types.Content | None) -> str:
     return "\n".join(chunks).strip()
 
 
-async def _run_agent(
+def _is_google_doc_save_request(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    if "save" not in text:
+        return False
+    return any(
+        phrase in text
+        for phrase in (
+            "google doc",
+            "google docs",
+            "my docs",
+            "docs",
+            "document",
+        )
+    )
+
+
+def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
+    for message in messages:
+        if str(message.get("role", "")).lower() == "user":
+            content = str(message.get("content", "")).strip()
+            if content and not _is_google_doc_save_request(content):
+                return f"ArkAI Tutor - {content[:48]}"
+    return "ArkAI Tutor Notes"
+
+
+def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
+    lines = ["ArkAI Tutor Notes", ""]
+    saved_any = False
+    for message in messages:
+        content = str(message.get("content", "")).strip()
+        if not content or _is_google_doc_save_request(content):
+            continue
+        role = str(message.get("role", "")).strip().lower()
+        author = "You" if role == "user" else "ArkAI"
+        lines.append(f"{author}:")
+        lines.append(content)
+        lines.append("")
+        saved_any = True
+    if not saved_any:
+        lines.append("No tutor content was available to save yet.")
+    return "\n".join(lines).strip()
+
+
+def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import google_oauth_status, save_google_doc_note
+
+    oauth_status = google_oauth_status(user_id)
+    if not oauth_status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": "Google saves is not connected for this signed-in ArkAI account.",
+        }
+
+    history = get_chat_messages(user_id, session_id=session_id)
+    if history.get("status") != "success":
+        return {
+            "status": "error",
+            "message": history.get("message") or "Could not read the current Tutor chat.",
+        }
+
+    messages = history.get("messages") or []
+    return save_google_doc_note(
+        user_id=user_id,
+        title=_chat_doc_title(messages),
+        note_text=_format_chat_messages_for_google_doc(messages),
+    )
+
+
+def _build_agent_message(
     user_id: str,
-    session_id: str,
     message: str,
     user_timezone: str = "",
     selected_material_ids: list[str] | None = None,
 ) -> str:
-    active_runner = _get_runner()
-    if not session_service.get_session_sync(
-        app_name=APP_NAME,
-        user_id=user_id,
-        session_id=session_id,
-    ):
-        session_service.create_session_sync(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-        )
-
-    final_reply = ""
     timezone_info = f"\nUser's local timezone: {user_timezone}\n" if user_timezone else ""
     learner_context = describe_learner_state(user_id)
     learner_state_block = (
@@ -380,13 +434,41 @@ async def _run_agent(
             "wants to change accounts.\n"
         )
 
-    effective_message = (
+    return (
         identity_instruction
         +
         f"{timezone_info}\n"
         f"{learner_state_block}\n"
         f"{material_context_block}\n"
         f"User message:\n{message}"
+    )
+
+
+async def _run_agent(
+    user_id: str,
+    session_id: str,
+    message: str,
+    user_timezone: str = "",
+    selected_material_ids: list[str] | None = None,
+) -> str:
+    active_runner = _get_runner()
+    if not session_service.get_session_sync(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    ):
+        session_service.create_session_sync(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+    final_reply = ""
+    effective_message = _build_agent_message(
+        user_id=user_id,
+        message=message,
+        user_timezone=user_timezone,
+        selected_material_ids=selected_material_ids,
     )
     async for event in active_runner.run_async(
         user_id=user_id,
@@ -524,7 +606,16 @@ def _run_agent_remote(
             "sessionId": session_id,
             "newMessage": {
                 "role": "user",
-                "parts": [{"text": message}],
+                "parts": [
+                    {
+                        "text": _build_agent_message(
+                            user_id=user_id,
+                            message=message,
+                            user_timezone=user_timezone,
+                            selected_material_ids=selected_material_ids,
+                        )
+                    }
+                ],
             },
             "streaming": False,
         },
@@ -1192,6 +1283,40 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                     "input_mode": input_mode,
                 },
             )
+            if _is_google_doc_save_request(message):
+                save_result = _save_tutor_chat_to_google_doc(user_id=user_id, session_id=session_id)
+                if save_result.get("status") == "success":
+                    reply = save_result.get("message") or "Saved this Tutor chat to Google Docs."
+                    doc_id = str(save_result.get("doc_id") or "").strip()
+                    if doc_id:
+                        reply = f"{reply}\n\nDocument: https://docs.google.com/document/d/{doc_id}/edit"
+                elif save_result.get("status") == "auth_required":
+                    reply = (
+                        "Google saves is still not connected for the signed-in ArkAI account I can verify. "
+                        "Open the account menu, connect Google saves again, then retry."
+                    )
+                else:
+                    reply = f"I could not save this Tutor chat to Google Docs: {save_result.get('message') or 'unknown error'}"
+                append_chat_message(
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="assistant",
+                    author="ARKAI",
+                    content=reply,
+                )
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "reply": reply,
+                        "session": {
+                            "userId": context["user_id"],
+                            "sessionId": context["session_id"],
+                            "displayName": context["display_name"],
+                            "isAnonymous": context["is_anonymous"],
+                        },
+                    },
+                )
+                return
             if _remote_agent_base_url():
                 reply = _run_agent_remote(
                     user_id=user_id,
