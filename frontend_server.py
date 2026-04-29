@@ -1,10 +1,12 @@
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
 import logging
 import json
 import os
 import posixpath
+import re
+import zoneinfo
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -336,8 +338,39 @@ def _is_google_doc_save_request(message: str) -> bool:
             "google docs",
             "my docs",
             "docs",
+            "doc",
             "document",
         )
+    )
+
+
+def _is_google_drive_save_request(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    return "save" in text and ("google drive" in text or "drive" in text)
+
+
+def _is_google_task_save_request(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    return (
+        ("save" in text or "add" in text or "create" in text)
+        and any(phrase in text for phrase in ("google task", "google tasks", "task", "tasks", "todo", "to-do"))
+    )
+
+
+def _is_google_calendar_save_request(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    return (
+        ("save" in text or "add" in text or "create" in text or "schedule" in text or "put" in text or "sync" in text)
+        and any(phrase in text for phrase in ("google calendar", "google calender", "calendar", "calender", "gcal", "event"))
+    )
+
+
+def _is_google_save_request(message: str) -> bool:
+    return (
+        _is_google_doc_save_request(message)
+        or _is_google_drive_save_request(message)
+        or _is_google_task_save_request(message)
+        or _is_google_calendar_save_request(message)
     )
 
 
@@ -345,7 +378,7 @@ def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
     for message in messages:
         if str(message.get("role", "")).lower() == "user":
             content = str(message.get("content", "")).strip()
-            if content and not _is_google_doc_save_request(content):
+            if content and not _is_google_save_request(content):
                 return f"ArkAI Tutor - {content[:48]}"
     return "ArkAI Tutor Notes"
 
@@ -355,7 +388,7 @@ def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
     saved_any = False
     for message in messages:
         content = str(message.get("content", "")).strip()
-        if not content or _is_google_doc_save_request(content):
+        if not content or _is_google_save_request(content):
             continue
         role = str(message.get("role", "")).strip().lower()
         author = "You" if role == "user" else "ArkAI"
@@ -368,8 +401,8 @@ def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
-def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[str, Any]:
-    from ark_learning_agent.productivity_mcp_server import google_oauth_status, save_google_doc_note
+def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import google_oauth_status
 
     oauth_status = google_oauth_status(user_id)
     if not oauth_status.get("connected"):
@@ -386,11 +419,231 @@ def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[str, A
         }
 
     messages = history.get("messages") or []
+    return {
+        "status": "success",
+        "messages": messages,
+        "title": _chat_doc_title(messages),
+        "note_text": _format_chat_messages_for_google_doc(messages),
+    }
+
+
+def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import save_google_doc_note
+
+    payload = _get_tutor_chat_save_payload(user_id, session_id)
+    if payload.get("status") != "success":
+        return payload
     return save_google_doc_note(
         user_id=user_id,
-        title=_chat_doc_title(messages),
-        note_text=_format_chat_messages_for_google_doc(messages),
+        title=payload["title"],
+        note_text=payload["note_text"],
     )
+
+
+def _save_tutor_chat_to_google_drive(user_id: str, session_id: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import save_text_file_to_drive
+
+    payload = _get_tutor_chat_save_payload(user_id, session_id)
+    if payload.get("status") != "success":
+        return payload
+    return save_text_file_to_drive(
+        user_id=user_id,
+        title=payload["title"],
+        content=payload["note_text"],
+    )
+
+
+def _save_tutor_chat_to_google_task(user_id: str, session_id: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import create_study_task
+
+    payload = _get_tutor_chat_save_payload(user_id, session_id)
+    if payload.get("status") != "success":
+        return payload
+    return create_study_task(
+        user_id=user_id,
+        task_title=f"Review {payload['title']}",
+        notes=payload["note_text"],
+    )
+
+
+def _calendar_window_from_message(message: str, timezone_name: str = "") -> tuple[str, str] | None:
+    start = _calendar_start_from_message(message, timezone_name)
+    if not start:
+        return None
+    end = start + timedelta(minutes=30)
+    return start.isoformat(), end.isoformat()
+
+
+def _calendar_start_from_message(message: str, timezone_name: str = "") -> datetime | None:
+    tz_name = timezone_name or "Asia/Bangkok"
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except zoneinfo.ZoneInfoNotFoundError:
+        tz = zoneinfo.ZoneInfo("Asia/Bangkok")
+    now = datetime.now(tz)
+    text = str(message or "").strip().lower()
+    date_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    if date_match:
+        event_date = datetime.strptime(date_match.group(1), "%Y-%m-%d").date()
+    elif "tomorrow" in text:
+        event_date = (now + timedelta(days=1)).date()
+    elif "today" in text:
+        event_date = now.date()
+    else:
+        weekdays = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+            "sunday": 6,
+        }
+        weekday = next((day for name, day in weekdays.items() if name in text), None)
+        if weekday is None:
+            return None
+        days_ahead = (weekday - now.weekday()) % 7
+        if days_ahead == 0 or "next" in text:
+            days_ahead = days_ahead or 7
+        event_date = (now + timedelta(days=days_ahead)).date()
+
+    time_match = re.search(r"(?<![-\d])(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?![-\d])", text)
+    if not time_match:
+        return None
+    hour = int(time_match.group(1))
+    minute = int(time_match.group(2) or 0)
+    suffix = time_match.group(3)
+    if suffix == "pm" and hour < 12:
+        hour += 12
+    if suffix == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+
+    return datetime(event_date.year, event_date.month, event_date.day, hour, minute, tzinfo=tz)
+
+
+def _requested_session_count(message: str, default: int) -> int:
+    text = str(message or "").strip().lower()
+    digit_match = re.search(r"\b(\d{1,2})\s+(?:study\s+)?sessions?\b", text)
+    if digit_match:
+        return max(1, min(default, int(digit_match.group(1))))
+    words = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    for word, count in words.items():
+        if re.search(rf"\b{word}\s+(?:study\s+)?sessions?\b", text):
+            return max(1, min(default, count))
+    return default
+
+
+def _is_roadmap_calendar_request(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    return _is_google_calendar_save_request(text) and any(
+        phrase in text
+        for phrase in ("roadmap", "study session", "study sessions", "sessions", "session plan")
+    )
+
+
+def _save_tutor_chat_to_google_calendar(user_id: str, session_id: str, message: str, timezone_name: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import create_calendar_event
+
+    payload = _get_tutor_chat_save_payload(user_id, session_id)
+    if payload.get("status") != "success":
+        return payload
+    window = _calendar_window_from_message(message, timezone_name)
+    if not window:
+        return {
+            "status": "needs_time",
+            "message": "Tell me a date and time, for example: save this to Google Calendar tomorrow at 9am.",
+        }
+    start_time, end_time = window
+    return create_calendar_event(
+        user_id=user_id,
+        event_title=payload["title"],
+        start_time_iso=start_time,
+        end_time_iso=end_time,
+        description=payload["note_text"],
+    )
+
+
+def _save_roadmap_sessions_to_google_calendar(user_id: str, message: str, timezone_name: str) -> dict[str, Any]:
+    from ark_learning_agent.productivity_mcp_server import create_calendar_event, google_oauth_status
+
+    oauth_status = google_oauth_status(user_id)
+    if not oauth_status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": "Google saves is not connected for this signed-in ArkAI account.",
+        }
+    start_at = _calendar_start_from_message(message, timezone_name)
+    if not start_at:
+        return {
+            "status": "needs_time",
+            "message": "Tell me when to start the calendar schedule, for example: add 5 study sessions to Google Calendar tomorrow at 9am.",
+        }
+
+    roadmap_result = get_roadmap(user_id)
+    if roadmap_result.get("status") != "success":
+        return {
+            "status": "error",
+            "message": roadmap_result.get("message") or "No active roadmap was found.",
+        }
+
+    sessions: list[dict[str, Any]] = []
+    for phase in roadmap_result.get("roadmap", {}).get("phases", []):
+        for session in phase.get("sessions", []):
+            if session.get("status") == "completed":
+                continue
+            sessions.append(
+                {
+                    "phase_title": str(phase.get("title") or "").strip(),
+                    "phase_goal": str(phase.get("goal") or "").strip(),
+                    "title": str(session.get("title") or "Study session").strip(),
+                    "focus": str(session.get("focus") or "").strip(),
+                    "duration_minutes": int(session.get("duration_minutes") or 30),
+                }
+            )
+    if not sessions:
+        return {"status": "error", "message": "No upcoming roadmap sessions were found."}
+
+    count = _requested_session_count(message, len(sessions))
+    created = []
+    for index, session in enumerate(sessions[:count]):
+        start = start_at + timedelta(days=index)
+        duration = max(15, min(240, int(session.get("duration_minutes") or 30)))
+        end = start + timedelta(minutes=duration)
+        description_parts = [
+            f"Focus: {session['focus']}" if session.get("focus") else "",
+            f"Phase: {session['phase_title']}" if session.get("phase_title") else "",
+            session.get("phase_goal") or "",
+            "Created from ArkAI Tutor.",
+        ]
+        result = create_calendar_event(
+            user_id=user_id,
+            event_title=f"Study: {session['title']}",
+            start_time_iso=start.isoformat(),
+            end_time_iso=end.isoformat(),
+            description="\n".join(part for part in description_parts if part),
+        )
+        if result.get("status") != "success":
+            return result
+        created.append(session["title"])
+
+    return {
+        "status": "success",
+        "message": f"Added {len(created)} roadmap session(s) to Google Calendar.",
+        "created_sessions": created,
+    }
 
 
 def _build_agent_message(
@@ -1283,20 +1536,52 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                     "input_mode": input_mode,
                 },
             )
-            if _is_google_doc_save_request(message):
-                save_result = _save_tutor_chat_to_google_doc(user_id=user_id, session_id=session_id)
+            if _is_google_save_request(message):
+                try:
+                    if _is_google_drive_save_request(message):
+                        save_result = _save_tutor_chat_to_google_drive(user_id=user_id, session_id=session_id)
+                    elif _is_google_task_save_request(message):
+                        save_result = _save_tutor_chat_to_google_task(user_id=user_id, session_id=session_id)
+                    elif _is_google_calendar_save_request(message):
+                        if _is_roadmap_calendar_request(message):
+                            save_result = _save_roadmap_sessions_to_google_calendar(
+                                user_id=user_id,
+                                message=message,
+                                timezone_name=user_timezone,
+                            )
+                        else:
+                            save_result = _save_tutor_chat_to_google_calendar(
+                                user_id=user_id,
+                                session_id=session_id,
+                                message=message,
+                                timezone_name=user_timezone,
+                            )
+                    else:
+                        save_result = _save_tutor_chat_to_google_doc(user_id=user_id, session_id=session_id)
+                except Exception as exc:
+                    LOGGER.exception("Tutor Google save failed for user %s", user_id)
+                    save_result = {
+                        "status": "error",
+                        "message": str(exc) or exc.__class__.__name__,
+                    }
+
                 if save_result.get("status") == "success":
-                    reply = save_result.get("message") or "Saved this Tutor chat to Google Docs."
+                    reply = save_result.get("message") or "Saved this Tutor chat."
                     doc_id = str(save_result.get("doc_id") or "").strip()
+                    web_view_link = str(save_result.get("web_view_link") or "").strip()
                     if doc_id:
                         reply = f"{reply}\n\nDocument: https://docs.google.com/document/d/{doc_id}/edit"
+                    elif web_view_link:
+                        reply = f"{reply}\n\nFile: {web_view_link}"
+                elif save_result.get("status") == "needs_time":
+                    reply = save_result.get("message") or "Tell me a date and time for the calendar event."
                 elif save_result.get("status") == "auth_required":
                     reply = (
                         "Google saves is still not connected for the signed-in ArkAI account I can verify. "
                         "Open the account menu, connect Google saves again, then retry."
                     )
                 else:
-                    reply = f"I could not save this Tutor chat to Google Docs: {save_result.get('message') or 'unknown error'}"
+                    reply = f"I could not complete that Google save: {save_result.get('message') or 'unknown error'}"
                 append_chat_message(
                     user_id=user_id,
                     session_id=session_id,

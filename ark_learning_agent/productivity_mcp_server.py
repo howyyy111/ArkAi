@@ -11,6 +11,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaInMemoryUpload
 
 import firebase_admin
 from firebase_admin import firestore
@@ -291,16 +292,7 @@ def get_google_credentials(user_id):
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                if db:
-                    _user_google_oauth_doc(normalized_user_id).set(
-                        {
-                            "token": creds.token,
-                            "updated_at": firestore.SERVER_TIMESTAMP,
-                        },
-                        merge=True,
-                    )
-                else:
-                    _persist_google_credentials(normalized_user_id, creds)
+                _persist_google_credentials(normalized_user_id, creds)
                 return creds
             except Exception:
                 pass
@@ -487,12 +479,47 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
     }
 
 @mcp.tool()
-def create_study_task(user_id: str, task_title: str, due_day: str = None) -> dict:
+def save_text_file_to_drive(user_id: str, title: str, content: str) -> dict:
+    """Saves plain text content as a file in the ArkAI Google Drive folder."""
+    creds = get_google_credentials(user_id)
+    if isinstance(creds, dict):
+        return creds
+    drive_service = build('drive', 'v3', credentials=creds)
+    folder_id = get_drive_folder_id(drive_service)
+    safe_title = str(title or "ArkAI Tutor Notes").strip() or "ArkAI Tutor Notes"
+    if not safe_title.lower().endswith(".txt"):
+        safe_title = f"{safe_title}.txt"
+    media = MediaInMemoryUpload(
+        str(content or "").encode("utf-8"),
+        mimetype="text/plain",
+        resumable=False,
+    )
+    file_metadata = {
+        "name": safe_title,
+        "parents": [folder_id],
+        "mimeType": "text/plain",
+    }
+    result = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, webViewLink, name",
+    ).execute()
+    return {
+        "status": "success",
+        "message": "Saved this Tutor chat to Google Drive.",
+        "file_id": result.get("id"),
+        "file_name": result.get("name"),
+        "web_view_link": result.get("webViewLink"),
+    }
+
+@mcp.tool()
+def create_study_task(user_id: str, task_title: str, due_day: str = None, notes: str = "") -> dict:
     """Creates a task on the user's primary Google Tasks list.
     Args:
         user_id: string
         task_title: title of the task
         due_day: Optional due date in YYYY-MM-DD or RFC3339 format
+        notes: Optional notes to attach to the task
     """
     creds = get_google_credentials(user_id)
     if isinstance(creds, dict):
@@ -501,7 +528,7 @@ def create_study_task(user_id: str, task_title: str, due_day: str = None) -> dic
     
     task_body = {
         'title': task_title,
-        'notes': f'Created by Adaptive Learning Assistant (for user {user_id})'
+        'notes': str(notes or f'Created by Adaptive Learning Assistant (for user {user_id})')[:8000]
     }
     if due_day:
         if 'T' not in due_day and len(due_day) == 10:
