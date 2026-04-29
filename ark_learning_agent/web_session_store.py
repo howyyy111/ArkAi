@@ -543,3 +543,278 @@ def append_chat_message(
             "UPDATE chat_sessions SET updated_at = ?, expires_at = ? WHERE session_id = ?",
             (now, _expiry_iso(CHAT_SESSION_RETENTION_DAYS), normalized_session_id),
         )
+
+
+def _session_title_from_messages(messages: list[dict[str, Any]]) -> str:
+    for message in messages:
+        if str(message.get("role", "")).lower() == "user":
+            content = str(message.get("content", "")).strip()
+            if content:
+                return content[:80]
+    return "Untitled session"
+
+
+def _normalize_chat_message(record: dict[str, Any]) -> dict[str, Any]:
+    role = str(record.get("role", "")).strip().lower()
+    return {
+        "message_id": str(record.get("message_id", "")).strip(),
+        "role": "agent" if role == "assistant" else role or "message",
+        "author": str(record.get("author", "")).strip(),
+        "content": str(record.get("content", "")).strip(),
+        "created_at": str(record.get("created_at", "")).strip(),
+    }
+
+
+def _firestore_chat_sessions(user_id: str, limit: int = 20) -> dict[str, Any]:
+    db = get_firestore_client()
+    if not db:
+        return {}
+
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing user id."}
+
+    sessions: list[dict[str, Any]] = []
+    for snapshot in _user_chat_sessions_collection(db, normalized_user_id).stream():
+        record = snapshot.to_dict() or {}
+        session_id = str(record.get("session_id") or snapshot.id).strip()
+        if not session_id:
+            continue
+
+        messages = [
+            _normalize_chat_message(message_snapshot.to_dict() or {})
+            for message_snapshot in _chat_messages_collection(db, normalized_user_id, session_id).stream()
+        ]
+        messages = [message for message in messages if message.get("content")]
+        messages.sort(key=lambda item: item.get("created_at", ""))
+        last_message_at = (
+            messages[-1].get("created_at")
+            if messages
+            else str(record.get("last_message_at") or record.get("updated_at") or record.get("created_at") or "")
+        )
+        sessions.append(
+            {
+                "session_id": session_id,
+                "title": _session_title_from_messages(messages),
+                "message_count": len(messages),
+                "created_at": str(record.get("created_at") or ""),
+                "updated_at": str(record.get("updated_at") or last_message_at or ""),
+                "last_message_at": str(last_message_at or ""),
+            }
+        )
+
+    sessions = [session for session in sessions if session.get("message_count")]
+    sessions.sort(key=lambda item: item.get("last_message_at") or item.get("updated_at") or "", reverse=True)
+    return {"status": "success", "sessions": sessions[: max(1, int(limit or 20))]}
+
+
+def _sqlite_chat_sessions(user_id: str, limit: int = 20) -> dict[str, Any]:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing user id."}
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+              s.session_id,
+              s.created_at,
+              s.updated_at,
+              COALESCE(MAX(m.created_at), s.updated_at, s.created_at) AS last_message_at,
+              COUNT(m.message_id) AS message_count
+            FROM chat_sessions s
+            LEFT JOIN chat_messages m ON m.session_id = s.session_id AND m.user_id = s.user_id
+            WHERE s.user_id = ?
+            GROUP BY s.session_id, s.created_at, s.updated_at
+            HAVING COUNT(m.message_id) > 0
+            ORDER BY last_message_at DESC
+            LIMIT ?
+            """,
+            (normalized_user_id, max(1, int(limit or 20))),
+        )
+        rows = cur.fetchall()
+        sessions: list[dict[str, Any]] = []
+        for row in rows:
+            session_id = str(row[0])
+            cur.execute(
+                """
+                SELECT content
+                FROM chat_messages
+                WHERE user_id = ? AND session_id = ? AND role = 'user'
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (normalized_user_id, session_id),
+            )
+            title_row = cur.fetchone()
+            title = str(title_row[0]).strip()[:80] if title_row and title_row[0] else "Untitled session"
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "title": title,
+                    "message_count": int(row[4] or 0),
+                    "created_at": str(row[1] or ""),
+                    "updated_at": str(row[2] or ""),
+                    "last_message_at": str(row[3] or ""),
+                }
+            )
+
+    return {"status": "success", "sessions": sessions}
+
+
+def list_chat_sessions(user_id: str, limit: int = 20) -> dict[str, Any]:
+    return _firestore_chat_sessions(user_id=user_id, limit=limit) or _sqlite_chat_sessions(user_id=user_id, limit=limit)
+
+
+def _firestore_chat_messages(user_id: str, session_id: str) -> dict[str, Any]:
+    db = get_firestore_client()
+    if not db:
+        return {}
+
+    normalized_user_id = str(user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_user_id or not normalized_session_id:
+        return {"status": "error", "message": "Missing chat session id."}
+
+    session_snapshot = _chat_session_doc_for_user(db, normalized_user_id, normalized_session_id).get()
+    if not session_snapshot.exists:
+        return {"status": "error", "message": "Chat session not found."}
+
+    messages = [
+        _normalize_chat_message(message_snapshot.to_dict() or {})
+        for message_snapshot in _chat_messages_collection(db, normalized_user_id, normalized_session_id).stream()
+    ]
+    messages = [message for message in messages if message.get("content")]
+    messages.sort(key=lambda item: item.get("created_at", ""))
+    return {"status": "success", "session_id": normalized_session_id, "messages": messages}
+
+
+def _sqlite_chat_messages(user_id: str, session_id: str) -> dict[str, Any]:
+    normalized_user_id = str(user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_user_id or not normalized_session_id:
+        return {"status": "error", "message": "Missing chat session id."}
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+            (normalized_user_id, normalized_session_id),
+        )
+        if not cur.fetchone():
+            return {"status": "error", "message": "Chat session not found."}
+        cur.execute(
+            """
+            SELECT message_id, role, author, content, created_at
+            FROM chat_messages
+            WHERE user_id = ? AND session_id = ?
+            ORDER BY created_at ASC
+            """,
+            (normalized_user_id, normalized_session_id),
+        )
+        messages = [
+            _normalize_chat_message(
+                {
+                    "message_id": row[0],
+                    "role": row[1],
+                    "author": row[2],
+                    "content": row[3],
+                    "created_at": row[4],
+                }
+            )
+            for row in cur.fetchall()
+        ]
+
+    return {"status": "success", "session_id": normalized_session_id, "messages": messages}
+
+
+def get_chat_messages(user_id: str, session_id: str) -> dict[str, Any]:
+    return _firestore_chat_messages(user_id=user_id, session_id=session_id) or _sqlite_chat_messages(
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+
+def _firestore_delete_chat_session(user_id: str, session_id: str) -> dict[str, Any]:
+    db = get_firestore_client()
+    if not db:
+        return {}
+
+    normalized_user_id = str(user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_user_id or not normalized_session_id:
+        return {"status": "error", "message": "Missing chat session id."}
+
+    session_ref = _chat_session_doc_for_user(db, normalized_user_id, normalized_session_id)
+    if not session_ref.get().exists:
+        return {"status": "error", "message": "Chat session not found."}
+    for message_snapshot in _chat_messages_collection(db, normalized_user_id, normalized_session_id).stream():
+        message_snapshot.reference.delete()
+    session_ref.delete()
+    return {"status": "success", "message": "Chat session deleted."}
+
+
+def _sqlite_delete_chat_session(user_id: str, session_id: str) -> dict[str, Any]:
+    normalized_user_id = str(user_id or "").strip()
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_user_id or not normalized_session_id:
+        return {"status": "error", "message": "Missing chat session id."}
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM chat_messages WHERE user_id = ? AND session_id = ?",
+            (normalized_user_id, normalized_session_id),
+        )
+        cur.execute(
+            "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+            (normalized_user_id, normalized_session_id),
+        )
+        deleted = cur.rowcount
+    if not deleted:
+        return {"status": "error", "message": "Chat session not found."}
+    return {"status": "success", "message": "Chat session deleted."}
+
+
+def delete_chat_session(user_id: str, session_id: str) -> dict[str, Any]:
+    return _firestore_delete_chat_session(user_id=user_id, session_id=session_id) or _sqlite_delete_chat_session(
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+
+def _firestore_delete_all_chat_sessions(user_id: str) -> dict[str, Any]:
+    db = get_firestore_client()
+    if not db:
+        return {}
+
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing user id."}
+
+    deleted = 0
+    for session_snapshot in _user_chat_sessions_collection(db, normalized_user_id).stream():
+        session_id = str(session_snapshot.id).strip()
+        for message_snapshot in _chat_messages_collection(db, normalized_user_id, session_id).stream():
+            message_snapshot.reference.delete()
+        session_snapshot.reference.delete()
+        deleted += 1
+    return {"status": "success", "message": f"Deleted {deleted} saved chat sessions.", "deleted": deleted}
+
+
+def _sqlite_delete_all_chat_sessions(user_id: str) -> dict[str, Any]:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing user id."}
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM chat_messages WHERE user_id = ?", (normalized_user_id,))
+        cur.execute("DELETE FROM chat_sessions WHERE user_id = ?", (normalized_user_id,))
+        deleted = cur.rowcount
+    return {"status": "success", "message": f"Deleted {deleted} saved chat sessions.", "deleted": deleted}
+
+
+def delete_all_chat_sessions(user_id: str) -> dict[str, Any]:
+    return _firestore_delete_all_chat_sessions(user_id=user_id) or _sqlite_delete_all_chat_sessions(user_id=user_id)

@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -196,6 +197,43 @@ class FrontendServerTests(unittest.TestCase):
         self.assertEqual(restored.app_name, "app")
         self.assertEqual(restored.user_id, "user@example.com")
         self.assertEqual(restored.state, {"topic": "loops"})
+
+    def test_sqlite_chat_history_lists_and_loads_messages(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "web_sessions.db")
+            with mock.patch.object(web_session_store, "SQLITE_DB_PATH", web_session_store.Path(db_path)):
+                identity = web_session_store.get_or_create_browser_identity(reset_identity=True)
+                session = web_session_store.get_or_create_chat_session(
+                    client_id=identity["client_id"],
+                    user_id=identity["user_id"],
+                )
+                web_session_store.append_chat_message(
+                    user_id=identity["user_id"],
+                    session_id=session["session_id"],
+                    role="user",
+                    author="user",
+                    content="Teach me binary search.",
+                )
+                web_session_store.append_chat_message(
+                    user_id=identity["user_id"],
+                    session_id=session["session_id"],
+                    role="assistant",
+                    author="ARKAI",
+                    content="Binary search halves the search space each step.",
+                )
+
+                sessions = web_session_store.list_chat_sessions(identity["user_id"])
+                messages = web_session_store.get_chat_messages(identity["user_id"], session["session_id"])
+                delete_result = web_session_store.delete_all_chat_sessions(identity["user_id"])
+                sessions_after_delete = web_session_store.list_chat_sessions(identity["user_id"])
+
+        self.assertEqual(sessions["status"], "success")
+        self.assertEqual(len(sessions["sessions"]), 1)
+        self.assertEqual(sessions["sessions"][0]["title"], "Teach me binary search.")
+        self.assertEqual(messages["status"], "success")
+        self.assertEqual([message["role"] for message in messages["messages"]], ["user", "agent"])
+        self.assertEqual(delete_result["status"], "success")
+        self.assertEqual(sessions_after_delete["sessions"], [])
 
 
 if __name__ == "__main__":

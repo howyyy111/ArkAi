@@ -45,8 +45,12 @@ from ark_learning_agent.learner_state import (
 )
 from ark_learning_agent.web_session_store import (
     append_chat_message,
+    delete_all_chat_sessions,
+    delete_chat_session,
+    get_chat_messages,
     get_or_create_browser_identity,
     get_or_create_chat_session,
+    list_chat_sessions,
 )
 from ark_learning_agent.firestore_session_service import FirestoreSessionService
 
@@ -694,6 +698,30 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, list_learning_materials(context["user_id"]))
             return
+        elif self.path.startswith("/api/chat/sessions"):
+            try:
+                context = self._resolve_request_context()
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+            result = list_chat_sessions(context["user_id"], limit=30)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+        elif self.path.startswith("/api/chat/messages"):
+            try:
+                context = self._resolve_request_context()
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(self.path).query)
+            session_id = str((query.get("sessionId") or [""])[0]).strip()
+            result = get_chat_messages(context["user_id"], session_id=session_id)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.NOT_FOUND
+            self._write_json(status, result)
+            return
         elif self.path.startswith("/api/intervention"):
             try:
                 context = self._resolve_request_context()
@@ -718,6 +746,8 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             "/api/auth/session",
             "/api/auth/logout",
             "/api/chat",
+            "/api/chat/delete",
+            "/api/chat/delete-all",
             "/api/diagnostic/start",
             "/api/diagnostic/submit",
             "/api/roadmap/generate",
@@ -822,6 +852,21 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                     "isAnonymous": context["is_anonymous"],
                 },
             )
+            return
+
+        if self.path == "/api/chat/delete":
+            result = delete_chat_session(
+                user_id=user_id,
+                session_id=str(payload.get("targetSessionId", "")).strip(),
+            )
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/chat/delete-all":
+            result = delete_all_chat_sessions(user_id=user_id)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
             return
 
         if self.path == "/api/diagnostic/start":

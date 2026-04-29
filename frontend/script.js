@@ -117,6 +117,7 @@ let selectedRoadmapSessionKey = "";
 let previousSessionsExpanded = false;
 let selectedHistoryItemKey = "";
 let previousResourcesExpanded = false;
+let latestChatSessions = [];
 let activeSession = {
   userId: "",
   sessionId: "",
@@ -259,7 +260,7 @@ function buildAssessmentPdfBlob(assessment) {
 
 function updateAssessmentActions() {
   const hasAssessment = Boolean(activeAssessment?.assessment_id);
-  saveAssessmentGoogleDocButton.classList.toggle("hidden", !hasAssessment);
+  saveAssessmentGoogleDocButton?.classList.toggle("hidden", !hasAssessment);
 }
 
 function buildHistoryItemKey(item) {
@@ -473,6 +474,104 @@ async function clearSessionState() {
   autoresizePrompt();
 }
 
+async function loadChatSession(sessionId) {
+  const targetSessionId = String(sessionId || "").trim();
+  if (!targetSessionId) {
+    return;
+  }
+
+  const response = await fetch(`/api/chat/messages?sessionId=${encodeURIComponent(targetSessionId)}`, {
+    headers: buildAuthHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not open that chat.");
+  }
+
+  await refreshSession({ sessionId: targetSessionId });
+  messages.innerHTML = "";
+  const chatMessages = data.messages || [];
+  if (!chatMessages.length) {
+    messages.innerHTML = buildEmptyStateMarkup();
+  } else {
+    for (const message of chatMessages) {
+      appendMessage(message.role === "assistant" ? "agent" : message.role, message.content || "", true);
+    }
+  }
+  closeHistoryModal();
+  setVoiceStatus("Saved chat opened.");
+}
+
+async function deleteChatSessionFromHistory(sessionId) {
+  const targetSessionId = String(sessionId || "").trim();
+  if (!targetSessionId) {
+    return;
+  }
+
+  const response = await fetch("/api/chat/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({ targetSessionId }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not delete saved chat.");
+  }
+
+  const uid = getUsername() || "anonymous";
+  window.localStorage.removeItem(`${historyStorageKeyPrefix}${uid}-${targetSessionId}`);
+  if (targetSessionId === getSessionId()) {
+    await clearSessionState();
+  }
+}
+
+async function deleteAllChatSessionsFromHistory() {
+  const confirmed = window.confirm("Delete all saved Tutor chat sessions? This cannot be undone.");
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await fetch("/api/chat/delete-all", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({}),
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok || data.status !== "success") {
+    if (response.status !== 404 || !latestChatSessions.length) {
+      throw new Error(data.error || data.message || "Could not delete saved chats.");
+    }
+    for (const session of latestChatSessions) {
+      if (session?.session_id) {
+        await deleteChatSessionFromHistory(session.session_id);
+      }
+    }
+  } else {
+    const uid = getUsername() || "anonymous";
+    for (const session of latestChatSessions) {
+      if (session?.session_id) {
+        window.localStorage.removeItem(`${historyStorageKeyPrefix}${uid}-${session.session_id}`);
+      }
+    }
+  }
+
+  await clearSessionState();
+  setVoiceStatus(data.message || "Saved chats deleted.");
+}
+
 async function openAccountSwitcher() {
   closeProfileDropdown();
   if (firebaseAuthClient && firebaseAuthClient.currentUser) {
@@ -640,41 +739,60 @@ function toggleProfileDropdown(forceOpen) {
   profileDropdown.classList.toggle("hidden", !shouldOpen);
 }
 
-function openHistoryModal() {
+function renderChatHistoryModal(sessions = []) {
   if (!historyModal || !historyListModal) {
     return;
   }
-  const sessions = getPreviousSessions();
+  latestChatSessions = sessions;
   historyListModal.innerHTML = sessions.length
     ? `
         <div class="history-modal-actions">
-          <button class="ghost-button subtle-action" type="button" data-history-modal-delete-all="true">
-            Delete all saved sessions
+          <button class="ghost-button subtle-action" type="button" data-chat-session-delete-all="true">
+            Delete all
           </button>
         </div>
         ${sessions.map((item) => `
-          <article class="history-item history-item-modal${selectedHistoryItemKey === item.key ? " is-selected" : ""}">
+          <article class="history-item history-item-modal${activeSession.sessionId === item.session_id ? " is-selected" : ""}">
             <button
               class="history-item-main"
               type="button"
-              data-history-modal-open="${escapeHtml(item.key)}"
+              data-chat-session-open="${escapeHtml(item.session_id)}"
             >
-              <strong>${escapeHtml(item.topic)}</strong>
-              <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
+              <strong>${escapeHtml(item.title || "Tutor session")}</strong>
+              <span>${escapeHtml(formatRelativeDays(item.last_message_at || item.updated_at || item.created_at))} • ${Number(item.message_count || 0)} messages</span>
             </button>
             <button
               class="mini-button"
               type="button"
-              data-history-modal-delete="${escapeHtml(item.key)}"
+              data-chat-session-delete="${escapeHtml(item.session_id)}"
             >
               Delete
             </button>
           </article>
         `).join("")}
       `
-    : `<p class="mastery-empty">No saved sessions yet.</p>`;
+    : `<p class="mastery-empty">No saved Tutor chats yet. Send a message, then use History to reopen it later.</p>`;
+}
+
+async function openHistoryModal() {
+  if (!historyModal || !historyListModal) {
+    return;
+  }
   historyModal.classList.add("open");
   historyModal.setAttribute("aria-hidden", "false");
+  historyListModal.innerHTML = `<p class="mastery-empty">Loading saved chats...</p>`;
+  try {
+    const response = await fetch("/api/chat/sessions", {
+      headers: buildAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not load chat history.");
+    }
+    renderChatHistoryModal(data.sessions || []);
+  } catch (error) {
+    historyListModal.innerHTML = `<p class="mastery-empty">${escapeHtml(error.message || "Could not load chat history.")}</p>`;
+  }
 }
 
 function closeHistoryModal() {
@@ -1790,59 +1908,61 @@ function renderAssessmentResult(result) {
   diagnosticResult.classList.remove("hidden");
 }
 
-saveAssessmentGoogleDocButton.addEventListener("click", async () => {
-  if (!activeAssessment?.assessment_id) {
-    assessmentStatus.textContent = "Create a mock test first.";
-    return;
-  }
-  
-  const currentUsername = getUsername();
-  if (!currentUsername) {
-      showErrorToast("Please log in to save documents.");
+if (saveAssessmentGoogleDocButton) {
+  saveAssessmentGoogleDocButton.addEventListener("click", async () => {
+    if (!activeAssessment?.assessment_id) {
+      assessmentStatus.textContent = "Create a mock test first.";
       return;
-  }
-
-  saveAssessmentGoogleDocButton.setAttribute("disabled", "disabled");
-  const oldText = saveAssessmentGoogleDocButton.textContent;
-  saveAssessmentGoogleDocButton.textContent = "Saving...";
-
-  try {
-    const response = await fetch("/api/assessment/save-google-doc", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildAuthHeaders(),
-      },
-      body: JSON.stringify({
-        userId: currentUsername,
-        idToken: getIdToken(),
-        assessmentId: activeAssessment.assessment_id,
-        title: activeAssessment.topic || "Mock Test",
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || data.message || "Could not save document.");
     }
-    
-    if (data.status === "auth_required") {
-        saveAssessmentGoogleDocButton.removeAttribute("disabled");
-        saveAssessmentGoogleDocButton.textContent = oldText;
-        showErrorToast(`Google Auth required. Please log in.`);
+
+    const currentUsername = getUsername();
+    if (!currentUsername) {
+        showErrorToast("Please log in to save documents.");
         return;
     }
-    
-    assessmentStatus.textContent = "Mock test saved to Google Docs!";
-    setTimeout(() => {
-        assessmentStatus.textContent = "";
-    }, 5000);
-  } catch (err) {
-    showErrorToast(err.message);
-  } finally {
-    saveAssessmentGoogleDocButton.removeAttribute("disabled");
-    saveAssessmentGoogleDocButton.textContent = oldText;
-  }
-});
+
+    saveAssessmentGoogleDocButton.setAttribute("disabled", "disabled");
+    const oldText = saveAssessmentGoogleDocButton.textContent;
+    saveAssessmentGoogleDocButton.textContent = "Saving...";
+
+    try {
+      const response = await fetch("/api/assessment/save-google-doc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAuthHeaders(),
+        },
+        body: JSON.stringify({
+          userId: currentUsername,
+          idToken: getIdToken(),
+          assessmentId: activeAssessment.assessment_id,
+          title: activeAssessment.topic || "Mock Test",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || data.message || "Could not save document.");
+      }
+
+      if (data.status === "auth_required") {
+          saveAssessmentGoogleDocButton.removeAttribute("disabled");
+          saveAssessmentGoogleDocButton.textContent = oldText;
+          showErrorToast(`Google Auth required. Please log in.`);
+          return;
+      }
+
+      assessmentStatus.textContent = "Mock test saved to Google Docs!";
+      setTimeout(() => {
+          assessmentStatus.textContent = "";
+      }, 5000);
+    } catch (err) {
+      showErrorToast(err.message);
+    } finally {
+      saveAssessmentGoogleDocButton.removeAttribute("disabled");
+      saveAssessmentGoogleDocButton.textContent = oldText;
+    }
+  });
+}
 
 function ensureIdentity() {
   const username = getUsername();
@@ -2195,8 +2315,8 @@ if (headerChangeAccount) {
 }
 
 if (showHistoryButton) {
-  showHistoryButton.addEventListener("click", () => {
-    openHistoryModal();
+  showHistoryButton.addEventListener("click", async () => {
+    await openHistoryModal();
   });
 }
 
@@ -2216,42 +2336,38 @@ if (historyModal) {
 
 if (historyListModal) {
   historyListModal.addEventListener("click", async (event) => {
-    const deleteAllButton = event.target.closest("[data-history-modal-delete-all]");
+    const deleteAllButton = event.target.closest("[data-chat-session-delete-all]");
     if (deleteAllButton) {
       try {
-        await deleteAllHistoryItems();
-        openHistoryModal();
+        await deleteAllChatSessionsFromHistory();
+        await openHistoryModal();
       } catch (error) {
-        setVoiceStatus(error.message || "Could not delete saved sessions.");
+        setVoiceStatus(error.message || "Could not delete saved chats.");
       }
       return;
     }
 
-    const deleteButton = event.target.closest("[data-history-modal-delete]");
+    const deleteButton = event.target.closest("[data-chat-session-delete]");
     if (deleteButton) {
       try {
-        await deleteHistoryItem(deleteButton.dataset.historyModalDelete || "");
-        openHistoryModal();
+        await deleteChatSessionFromHistory(deleteButton.dataset.chatSessionDelete || "");
+        await openHistoryModal();
       } catch (error) {
-        setVoiceStatus(error.message || "Could not delete saved session.");
+        setVoiceStatus(error.message || "Could not delete saved chat.");
       }
       return;
     }
 
-    const openButton = event.target.closest("[data-history-modal-open]");
+    const openButton = event.target.closest("[data-chat-session-open]");
     if (!openButton) {
       return;
     }
 
-    selectedHistoryItemKey = openButton.dataset.historyModalOpen || "";
-    const historyItem = findHistoryItemByKey(selectedHistoryItemKey);
-    const matchingRoadmapSession = findRoadmapSessionByTopic(activeRoadmap, historyItem?.topic || "");
-    selectedRoadmapSessionKey = matchingRoadmapSession?.key || selectedRoadmapSessionKey;
-    renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
-    renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
-    closeHistoryModal();
-    roadmapStatus.textContent = "Saved session loaded below.";
-    roadmapSessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    try {
+      await loadChatSession(openButton.dataset.chatSessionOpen || "");
+    } catch (error) {
+      setVoiceStatus(error.message || "Could not open saved chat.");
+    }
   });
 }
 

@@ -1297,6 +1297,195 @@ textarea:focus {
     gap: 8px;
 }
 
+#roadmap-workspace.plan-workspace {
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 12px;
+    padding: 22px 24px;
+    border-radius: 24px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.6));
+    border-color: rgba(28, 28, 28, 0.08);
+    box-shadow: 0 16px 36px rgba(18, 18, 18, 0.045);
+}
+
+#roadmap-workspace .workspace-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(28, 28, 28, 0.07);
+}
+
+#roadmap-workspace .workspace-header .mini-button {
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 14px;
+}
+
+#roadmap-workspace .roadmap-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+#roadmap-workspace .workspace-header h3 {
+    margin: 0;
+    line-height: 1.18;
+}
+
+#roadmap-workspace #roadmap-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: fit-content;
+    max-width: min(420px, 48%);
+    min-height: 34px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(28, 28, 28, 0.08);
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#roadmap-workspace .roadmap-session-detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.48fr);
+    align-items: start;
+    gap: 10px 18px;
+    max-height: none;
+    padding: 14px 18px;
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.66));
+    border-color: rgba(28, 28, 28, 0.08);
+    box-shadow: 0 10px 24px rgba(18, 18, 18, 0.035);
+    overflow: visible;
+}
+
+#roadmap-workspace .roadmap-detail-head {
+    grid-column: 1;
+    align-items: start;
+    gap: 12px;
+}
+
+#roadmap-workspace .roadmap-detail-head h5 {
+    font-size: 1.04rem;
+    line-height: 1.25;
+}
+
+#roadmap-workspace .roadmap-detail-copy {
+    grid-column: 1;
+    color: var(--text-soft);
+    line-height: 1.45;
+}
+
+#roadmap-workspace .roadmap-detail-meta {
+    grid-column: 1;
+}
+
+#roadmap-workspace .roadmap-detail-steps {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(23, 23, 23, 0.035);
+    border: 1px solid rgba(28, 28, 28, 0.05);
+}
+
+#roadmap-workspace .roadmap-session-detail > .inline-actions {
+    grid-column: 2;
+    grid-row: 4;
+    justify-content: flex-start;
+}
+
+#roadmap-workspace .roadmap-session-detail .status-pill {
+    min-height: 36px;
+    padding: 8px 12px;
+}
+
+#roadmap-workspace .roadmap-session-detail .primary-button {
+    min-height: 42px;
+    padding: 0 14px;
+    border-radius: 14px;
+}
+
+#roadmap-workspace .roadmap-board {
+    display: grid;
+    gap: 16px;
+    max-height: none;
+    min-height: 0;
+    padding-right: 8px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+#roadmap-workspace .roadmap-phase {
+    display: grid;
+    gap: 16px;
+    padding: 22px 24px;
+    border-radius: 20px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.66));
+    border-color: rgba(28, 28, 28, 0.08);
+    box-shadow: 0 12px 26px rgba(18, 18, 18, 0.035);
+}
+
+#roadmap-workspace .roadmap-phase-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 16px;
+}
+
+#roadmap-workspace .roadmap-phase h5 {
+    margin-top: 4px;
+    line-height: 1.32;
+}
+
+#roadmap-workspace .roadmap-kicker {
+    min-width: 128px;
+    text-align: right;
+    line-height: 1.45;
+}
+
+#roadmap-workspace .roadmap-session-list {
+    display: grid;
+    gap: 12px;
+}
+
+#roadmap-workspace .roadmap-session {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 14px;
+    padding: 16px 18px;
+    border-radius: 16px;
+}
+
+#roadmap-workspace .roadmap-session strong {
+    display: block;
+    margin-bottom: 4px;
+    line-height: 1.3;
+}
+
+#roadmap-workspace .roadmap-session p {
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+#roadmap-workspace .roadmap-session-actions {
+    justify-content: flex-end;
+}
+
 .focus-view[data-view="plan"] .mini-button {
     padding: 9px 12px;
     min-height: 38px;
@@ -1394,6 +1583,16 @@ textarea:focus {
     line-height: 1.45;
 }
 
+.focus-view[data-view="plan"] #diagnostics .section-head .state-summary,
+.focus-view[data-view="plan"] #roadmaps .section-head .state-summary {
+    line-height: calc(1.45em + 2px);
+}
+
+.focus-view[data-view="plan"] #diagnostics .assessment-status:empty,
+.focus-view[data-view="plan"] #roadmaps .assessment-status:empty {
+    display: none;
+}
+
 .focus-view[data-view="plan"] #roadmaps .assessment-grid {
     flex-shrink: 0;
 }
@@ -1418,6 +1617,12 @@ textarea:focus {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
     gap: 16px;
+}
+
+@media (min-width: 801px) {
+    .focus-view[data-view="plan"] #diagnostics .section-head {
+        min-height: 114px;
+    }
 }
 
 .focus-view[data-view="plan"] .section-head h3 {
@@ -1503,6 +1708,37 @@ textarea:focus {
 .focus-view[data-view="materials"] label:not(.drop-zone):not(.material-select-label) {
     display: grid;
     gap: 6px;
+}
+
+.upload-choice-divider {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    color: rgba(79, 74, 67, 0.66);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.upload-choice-divider::before,
+.upload-choice-divider::after {
+    content: "";
+    height: 1px;
+    background: rgba(28, 28, 28, 0.1);
+}
+
+.upload-choice-divider span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.74);
+    border: 1px solid rgba(28, 28, 28, 0.08);
 }
 
 .focus-view[data-view="materials"] textarea {
@@ -1804,10 +2040,12 @@ textarea:focus {
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-width: 0;
     min-height: 0;
     gap: 12px;
     height: auto;
     overflow-y: auto;
+    overflow-x: hidden;
     padding-right: 8px;
     overscroll-behavior: contain;
 }
@@ -1888,11 +2126,14 @@ textarea:focus {
 
 .message {
     max-width: 100%;
+    min-width: 0;
     padding: 14px 16px;
     border-radius: 18px;
     line-height: 1.55;
     align-self: flex-start;
     font-size: 0.95rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .focus-view[data-view="tutor"] .message {
@@ -1910,23 +2151,33 @@ textarea:focus {
 .message-body {
     display: grid;
     gap: 10px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .message-body p {
     margin: 0;
     white-space: pre-wrap;
     line-height: 1.58;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .message-body ul,
 .message-body ol {
     margin: 0;
     padding-left: 22px;
+    min-width: 0;
 }
 
 .message-body li {
     margin-bottom: 4px;
     line-height: 1.52;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .message-body h1,
@@ -1939,7 +2190,10 @@ textarea:focus {
 }
 
 .message-body table {
+    display: block;
     width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
     border-collapse: collapse;
     margin: 8px 0;
 }
@@ -1965,6 +2219,7 @@ textarea:focus {
 }
 
 .message-body pre {
+    max-width: 100%;
     overflow-x: auto;
     padding: 16px;
 }
@@ -1997,6 +2252,9 @@ textarea:focus {
     border-radius: 8px;
     background: rgba(23, 23, 23, 0.08);
     color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .message.user {
@@ -2026,6 +2284,7 @@ textarea:focus {
     color: #dcdcdc;
     background: transparent;
     line-height: 1.6;
+    white-space: pre;
 }
 
 .hljs {
@@ -2471,6 +2730,46 @@ textarea:focus {
     .focus-view[data-view="plan"] .roadmap-session-detail {
         max-height: none;
         overflow: visible;
+    }
+
+    #roadmap-workspace.plan-workspace {
+        height: auto;
+        overflow: visible;
+    }
+
+    #roadmap-workspace .workspace-header,
+    #roadmap-workspace .roadmap-phase-header,
+    #roadmap-workspace .roadmap-session,
+    #roadmap-workspace .roadmap-session-detail {
+        grid-template-columns: 1fr;
+    }
+
+    #roadmap-workspace .roadmap-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    #roadmap-workspace #roadmap-status {
+        max-width: 100%;
+        white-space: normal;
+    }
+
+    #roadmap-workspace .roadmap-detail-head,
+    #roadmap-workspace .roadmap-detail-copy,
+    #roadmap-workspace .roadmap-detail-meta,
+    #roadmap-workspace .roadmap-detail-steps,
+    #roadmap-workspace .roadmap-session-detail > .inline-actions {
+        grid-column: auto;
+        grid-row: auto;
+    }
+
+    #roadmap-workspace .roadmap-kicker {
+        min-width: 0;
+        text-align: left;
+    }
+
+    #roadmap-workspace .roadmap-session-actions {
+        justify-content: flex-start;
     }
 
     .focus-view[data-view="insights"] .plan-main {
