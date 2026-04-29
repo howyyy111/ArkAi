@@ -5,7 +5,7 @@ import os
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,10 @@ from google import genai
 from google.genai import types
 from firebase_admin import firestore
 
-from .learner_state import create_custom_assessment, get_firestore_client
+try:
+    from .learner_state import create_custom_assessment, get_firestore_client
+except ImportError:
+    from learner_state import create_custom_assessment, get_firestore_client
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -25,6 +28,8 @@ load_dotenv(BASE_DIR / ".env", override=True)
 SQLITE_DB_PATH = BASE_DIR / "learning_agent.db"
 UPLOADS_DIR = BASE_DIR / "learner_uploads"
 MATERIAL_MODEL = os.environ.get("ARKAIS_MATERIAL_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+MAX_MATERIAL_FILE_SIZE_BYTES = 5 * 1024 * 1024
+MAX_MATERIAL_LIBRARY_SIZE_BYTES = 25 * 1024 * 1024
 
 
 def _utc_now() -> str:
@@ -83,7 +88,7 @@ def init_materials_sqlite():
 
 
 def _material_collection(db, user_id: str):
-    return db.collection("learners").document(user_id).collection("materials")
+    return db.collection("users").document(user_id).collection("materials")
 
 
 def _decode_base64(data_base64: str) -> bytes:
@@ -119,6 +124,11 @@ def _build_summary(extracted_text: str, name: str) -> str:
     return preview
 
 
+def _get_total_material_storage_bytes(user_id: str) -> int:
+    records = _get_material_records(user_id)
+    return sum(int((record.get("metadata") or {}).get("size_bytes", 0) or 0) for record in records)
+
+
 def save_learning_material(
     user_id: str,
     name: str,
@@ -131,7 +141,20 @@ def save_learning_material(
     created_at = _utc_now()
     clean_name = _safe_name(name or "material")
     blob = _decode_base64(data_base64) if data_base64 else pasted_text.encode("utf-8")
+    
+    if len(blob) > MAX_MATERIAL_FILE_SIZE_BYTES:
+        return {"status": "error", "message": "File exceeds the 5 MB limit."}
+    if _get_total_material_storage_bytes(user_id) + len(blob) > MAX_MATERIAL_LIBRARY_SIZE_BYTES:
+        return {"status": "error", "message": "Library storage limit reached. Keep total materials under 25 MB."}
+
     mime = mime_type or mimetypes.guess_type(clean_name)[0] or "application/octet-stream"
+    allowed_mimes = [
+        "application/pdf", "text/plain", "text/csv", "application/json", 
+        "image/png", "image/jpeg", "image/webp"
+    ]
+    if not pasted_text and not mime.startswith("text/") and mime not in allowed_mimes:
+        return {"status": "error", "message": f"Unsupported file type: {mime}"}
+
     kind = "image" if mime.startswith("image/") else "text" if pasted_text or mime.startswith("text/") else "file"
 
     local_dir = _safe_user_folder(user_id)
@@ -140,6 +163,20 @@ def save_learning_material(
 
     extracted_text = _extract_text_from_payload(clean_name, mime, blob, pasted_text)
     metadata: dict[str, Any] = {"size_bytes": len(blob)}
+    
+    # Attempt to upload to Google Cloud Storage (Firebase Storage) if configured
+    remote_url = ""
+    try:
+        from firebase_admin import storage
+        bucket = storage.bucket()
+        if bucket:
+            blob_obj = bucket.blob(f"materials/{user_id}/{material_id}-{clean_name}")
+            blob_obj.upload_from_string(blob, content_type=mime)
+            remote_url = blob_obj.public_url
+            metadata["gcs_path"] = blob_obj.name
+    except Exception:
+        pass
+
     if kind == "image":
         try:
             with Image.open(local_path) as image:
@@ -155,6 +192,7 @@ def save_learning_material(
         "mime_type": mime,
         "kind": kind,
         "local_path": str(local_path),
+        "remote_url": remote_url,
         "source_type": "paste" if pasted_text else "upload",
         "extracted_text": extracted_text[:50000],
         "summary": summary,
@@ -164,8 +202,22 @@ def save_learning_material(
 
     db = get_firestore_client()
     if db:
+        is_anonymous = str(user_id).startswith("guest:")
+        db.collection("users").document(user_id).set(
+            {
+                "user_id": user_id,
+                "is_anonymous": is_anonymous,
+                "updated_at": created_at,
+                **(
+                    {"expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()}
+                    if is_anonymous
+                    else {}
+                ),
+            },
+            merge=True,
+        )
         _material_collection(db, user_id).document(material_id).set(record)
-        storage = "firestore+localfile"
+        storage = "firestore+gcs" if remote_url else "firestore+localfile"
     else:
         conn = sqlite3.connect(SQLITE_DB_PATH)
         cur = conn.cursor()

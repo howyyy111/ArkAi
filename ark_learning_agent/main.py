@@ -2,10 +2,18 @@ import os
 
 import uvicorn
 from fastapi import FastAPI
-from google.adk.cli.fast_api import get_fast_api_app
+from google.adk.cli import fast_api as adk_fast_api
+from google.adk.sessions import InMemorySessionService
+
+try:
+    from .firestore_session_service import FirestoreSessionService
+except ImportError:
+    from firestore_session_service import FirestoreSessionService
+
+def _running_on_cloud_run() -> bool:
+    return bool(os.environ.get("K_SERVICE"))
 
 AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
-SESSION_SERVICE_URI = os.environ.get("ARKAIS_AGENT_SESSION_SERVICE_URI", "memory://")
 ALLOW_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("ARKAIS_AGENT_ALLOW_ORIGINS", "*").split(",")
@@ -15,14 +23,50 @@ SERVE_WEB_INTERFACE = (
     os.environ.get("ARKAIS_AGENT_WITH_UI", "true").strip().lower() == "true"
 )
 APP_HOST = os.environ.get("ARKAIS_AGENT_HOST", "0.0.0.0")
-APP_PORT = int(os.environ.get("PORT", os.environ.get("ARKAIS_AGENT_PORT", "8080")))
+APP_PORT = int(os.environ.get("PORT", os.environ.get("ARKAIS_AGENT_PORT", "8000")))
 
-app: FastAPI = get_fast_api_app(
-    agents_dir=AGENTS_DIR,
-    session_service_uri=SESSION_SERVICE_URI,
-    allow_origins=ALLOW_ORIGINS,
-    web=SERVE_WEB_INTERFACE,
-)
+def _create_session_service():
+    if _running_on_cloud_run():
+        firestore_session_service = FirestoreSessionService()
+        if firestore_session_service.is_available():
+            return firestore_session_service
+    return InMemorySessionService()
+
+def _build_app() -> FastAPI:
+    agent_loader = adk_fast_api.AgentLoader(AGENTS_DIR)
+    adk_fast_api.load_services_module(AGENTS_DIR)
+    memory_service = adk_fast_api.create_memory_service_from_options(
+        base_dir=AGENTS_DIR,
+        memory_service_uri=None,
+    )
+    artifact_service = adk_fast_api.create_artifact_service_from_options(
+        base_dir=AGENTS_DIR,
+        artifact_service_uri=None,
+        strict_uri=True,
+        use_local_storage=True,
+    )
+    adk_web_server = adk_fast_api.AdkWebServer(
+        agent_loader=agent_loader,
+        session_service=_create_session_service(),
+        memory_service=memory_service,
+        artifact_service=artifact_service,
+        credential_service=adk_fast_api.InMemoryCredentialService(),
+        eval_sets_manager=adk_fast_api.LocalEvalSetsManager(agents_dir=AGENTS_DIR),
+        eval_set_results_manager=adk_fast_api.LocalEvalSetResultsManager(agents_dir=AGENTS_DIR),
+        agents_dir=AGENTS_DIR,
+    )
+
+    web_assets_dir = None
+    if SERVE_WEB_INTERFACE:
+        web_assets_dir = adk_fast_api.Path(adk_fast_api.__file__).parent.resolve() / "browser"
+
+    return adk_web_server.get_fast_api_app(
+        allow_origins=ALLOW_ORIGINS,
+        web_assets_dir=web_assets_dir,
+    )
+
+
+app: FastAPI = _build_app()
 
 
 if __name__ == "__main__":

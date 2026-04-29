@@ -3,17 +3,43 @@ import json
 import os
 from pathlib import Path
 
-from flask import request
 from google_auth_oauthlib.flow import Flow
 import firebase_admin
 from firebase_admin import firestore
+from google.cloud import firestore as google_cloud_firestore
+
+
+def _firebase_project_id() -> str:
+    return (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCLOUD_PROJECT")
+        or os.environ.get("FIREBASE_PROJECT_ID")
+        or ""
+    ).strip()
+
+
+def _initialize_firestore():
+    project_id = _firebase_project_id()
+    if project_id:
+        firebase_admin.initialize_app(options={"projectId": project_id})
+    else:
+        firebase_admin.initialize_app()
+
+    database_id = (os.environ.get("FIRESTORE_DATABASE") or "").strip()
+    if database_id:
+        client = google_cloud_firestore.Client(project=project_id or None, database=database_id)
+    else:
+        client = firestore.client()
+
+    if not bool(os.environ.get("K_SERVICE")):
+        client.collection("test").document("test").get()
+    return client
+
 
 try:
-    firebase_admin.initialize_app()
-    db = firestore.client()
-    if not bool(os.environ.get("K_SERVICE")):
-        db.collection("test").document("test").get()
-except Exception:
+    db = _initialize_firestore()
+except Exception as exc:
+    print(f"Firebase Admin initialization failed: {exc}", flush=True)
     db = None
 
 SCOPES = [
@@ -56,6 +82,19 @@ def _callback_redirect_uri(request):
     return merged.rstrip("/")
 
 
+def _normalize_oauth_user_id(user_id: str) -> str:
+    return str(user_id or "").strip().lower()
+
+
+def _user_google_oauth_doc(user_id: str):
+    return (
+        db.collection("users")
+        .document(_normalize_oauth_user_id(user_id))
+        .collection("integrations")
+        .document("google_oauth")
+    )
+
+
 @functions_framework.http
 def auth_callback(request):
     """HTTP Cloud Function for handling Google OAuth callback."""
@@ -68,7 +107,9 @@ def auth_callback(request):
     if not code or not state:
         return "Missing 'code' or 'state' parameters from Google.", 400
         
-    username = state
+    username = _normalize_oauth_user_id(state)
+    if not username:
+        return "Missing OAuth state user identity.", 400
 
     redirect_uri = _callback_redirect_uri(request)
 
@@ -92,9 +133,22 @@ def auth_callback(request):
             "token_uri": creds.token_uri,
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
-            "scopes": creds.scopes
+            "scopes": creds.scopes,
+            "provider": "google_oauth",
         }
-        db.collection("user_tokens").document(username).set(creds_dict)
+        db.collection("users").document(username).set(
+            {
+                "user_id": username,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        _user_google_oauth_doc(username).set(
+            {
+                **creds_dict,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
         
         return f"<h1>Success!</h1><p>Tokens saved securely in Firebase for user: <b>{username}</b></p><br><p>You can close this tab and return to the chat, tell the agent you have authorized it, and repeat your command!</p>"
         

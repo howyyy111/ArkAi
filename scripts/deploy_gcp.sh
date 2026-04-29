@@ -22,6 +22,7 @@ source "$DEPLOY_ENV_FILE"
 set +a
 
 PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-}}"
+PROJECT_NUMBER="${PROJECT_NUMBER:-}"
 REGION="${REGION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}"
 FRONTEND_SERVICE_NAME="${FRONTEND_SERVICE_NAME:-${SERVICE_NAME:-arkais-frontend}}"
 AGENT_SERVICE_NAME="${AGENT_SERVICE_NAME:-ark-learning-agent}"
@@ -50,6 +51,36 @@ require_cmd() {
 require_cmd gcloud
 require_cmd python3
 
+resolve_project_number() {
+  if [[ -n "$PROJECT_NUMBER" ]]; then
+    return
+  fi
+
+  PROJECT_NUMBER="$(
+    gcloud projects describe "$PROJECT_ID" \
+      --format='value(projectNumber)'
+  )"
+
+  if [[ -z "$PROJECT_NUMBER" ]]; then
+    echo "Could not resolve project number for $PROJECT_ID."
+    exit 1
+  fi
+}
+
+preferred_run_url() {
+  local service_name="$1"
+  local fallback_url="${2:-}"
+
+  resolve_project_number
+
+  if [[ -n "$service_name" && -n "$PROJECT_NUMBER" && -n "$REGION" ]]; then
+    echo "https://${service_name}-${PROJECT_NUMBER}.${REGION}.run.app"
+    return
+  fi
+
+  echo "$fallback_url"
+}
+
 if [[ ! -f "$ROOT_DIR/ark_learning_agent/credentials.json" ]]; then
   echo "Warning: missing $ROOT_DIR/ark_learning_agent/credentials.json"
   echo "Google Docs / Calendar / Tasks OAuth will not work from the standalone agent service."
@@ -61,6 +92,8 @@ if [[ ! -f "$ROOT_DIR/auth_function/credentials.json" ]]; then
 fi
 
 echo "Using project: $PROJECT_ID"
+resolve_project_number
+echo "Using project number: $PROJECT_NUMBER"
 echo "Using region:  $REGION"
 
 gcloud config set project "$PROJECT_ID" >/dev/null
@@ -91,6 +124,11 @@ GOOGLE_CLOUD_PROJECT: "$PROJECT_ID"
 GCLOUD_PROJECT: "$PROJECT_ID"
 FIREBASE_PROJECT_ID: "$FIREBASE_PROJECT_ID"
 EOF
+  if [[ -n "${FIRESTORE_DATABASE:-}" ]]; then
+    cat >>"$env_file" <<EOF
+FIRESTORE_DATABASE: "$FIRESTORE_DATABASE"
+EOF
+  fi
 
   if [[ -n "${OAUTH_REDIRECT_URI:-}" ]]; then
     cat >>"$env_file" <<EOF
@@ -125,6 +163,7 @@ EOF
       --project "$PROJECT_ID" \
       --format='value(status.url)'
   )"
+  AUTH_URL="$(preferred_run_url "$AUTH_SERVICE_NAME" "$AUTH_URL")"
 
   if [[ -z "$AUTH_URL" ]]; then
     echo "Could not resolve auth callback URL after deployment."
@@ -149,6 +188,11 @@ AUTH_CALLBACK_URL: "$AUTH_URL"
 GOOGLE_OAUTH_PROMPT: "$GOOGLE_OAUTH_PROMPT"
 ARKAIS_AGENT_WITH_UI: "$ARKAIS_AGENT_WITH_UI"
 EOF
+  if [[ -n "${FIRESTORE_DATABASE:-}" ]]; then
+    cat >>"$env_file" <<EOF
+FIRESTORE_DATABASE: "$FIRESTORE_DATABASE"
+EOF
+  fi
 
   local deploy_cmd=(
     gcloud run deploy "$AGENT_SERVICE_NAME"
@@ -176,6 +220,7 @@ EOF
       --project "$PROJECT_ID" \
       --format='value(status.url)'
   )"
+  AGENT_URL="$(preferred_run_url "$AGENT_SERVICE_NAME" "$AGENT_URL")"
 
   if [[ -z "$AGENT_URL" ]]; then
     echo "Could not resolve agent URL after deployment."
@@ -197,6 +242,7 @@ resolve_auth_url() {
       --project "$PROJECT_ID" \
       --format='value(status.url)' 2>/dev/null || true
   )"
+  AUTH_URL="$(preferred_run_url "$AUTH_SERVICE_NAME" "$AUTH_URL")"
 }
 
 resolve_agent_url() {
@@ -211,6 +257,7 @@ resolve_agent_url() {
       --project "$PROJECT_ID" \
       --format='value(status.url)' 2>/dev/null || true
   )"
+  AGENT_URL="$(preferred_run_url "$AGENT_SERVICE_NAME" "$AGENT_URL")"
 }
 
 deploy_frontend() {
@@ -233,11 +280,16 @@ AUTH_CALLBACK_URL: "$AUTH_URL"
 GOOGLE_OAUTH_PROMPT: "$GOOGLE_OAUTH_PROMPT"
 ARKAIS_FRONTEND_HOST: "0.0.0.0"
 EOF
+  if [[ -n "${FIRESTORE_DATABASE:-}" ]]; then
+    cat >>"$env_file" <<EOF
+FIRESTORE_DATABASE: "$FIRESTORE_DATABASE"
+EOF
+  fi
 
   if [[ -n "$AGENT_URL" ]]; then
     cat >>"$env_file" <<EOF
 ARKAIS_AGENT_API_URL: "$AGENT_URL"
-ARKAIS_AGENT_APP_NAME: "ark_learning_agent"
+ARKAIS_AGENT_APP_NAME: "agent"
 EOF
   fi
 
@@ -273,6 +325,7 @@ EOF
       --project "$PROJECT_ID" \
       --format='value(status.url)'
   )"
+  FRONTEND_URL="$(preferred_run_url "$FRONTEND_SERVICE_NAME" "$FRONTEND_URL")"
 
   echo "Frontend URL: $FRONTEND_URL"
 }

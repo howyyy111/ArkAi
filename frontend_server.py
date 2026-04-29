@@ -1,4 +1,7 @@
 import asyncio
+from datetime import timedelta
+from http.cookies import SimpleCookie
+import logging
 import json
 import os
 import posixpath
@@ -6,7 +9,6 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 import requests
 from google.adk.runners import Runner
@@ -25,12 +27,12 @@ from ark_learning_agent.materials import (
     save_learning_material,
     tutor_from_materials,
 )
-from ark_learning_agent.agent import root_agent
 from ark_learning_agent.learner_state import (
     build_or_update_roadmap,
     create_assessment,
     delete_all_learning_history,
     delete_learning_history_item,
+    delete_roadmap,
     describe_learner_state,
     generate_weekly_report,
     get_evaluation_snapshot,
@@ -41,22 +43,57 @@ from ark_learning_agent.learner_state import (
     submit_assessment,
     update_roadmap_session,
 )
-from ark_learning_agent.productivity_mcp_server import save_weekly_report_doc
+from ark_learning_agent.web_session_store import (
+    append_chat_message,
+    get_or_create_browser_identity,
+    get_or_create_chat_session,
+)
+from ark_learning_agent.firestore_session_service import FirestoreSessionService
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 APP_NAME = "arkais-frontend"
+LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 4173
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_AGENT_TIMEOUT_SECONDS = 90
-DEFAULT_AGENT_APP_NAME = "ark_learning_agent"
-
-session_service = InMemorySessionService()
-runner = Runner(
-    app_name=APP_NAME,
-    agent=root_agent,
-    session_service=session_service,
+DEFAULT_AGENT_APP_NAME = "agent"
+CLIENT_COOKIE_NAME = "arkais_client_id"
+SESSION_COOKIE_NAME = "arkais_session_id"
+FIREBASE_SESSION_COOKIE_NAME = "arkais_firebase_session"
+FIREBASE_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 5
+AUTH_CALLBACK_CREDENTIAL_PATHS = (
+    BASE_DIR / "auth_function" / "credentials.json",
+    BASE_DIR / "ark_learning_agent" / "credentials.json",
 )
+
+
+def _persistent_session_backend_required() -> bool:
+    if (os.environ.get("ARKAIS_ALLOW_IN_MEMORY_SESSIONS") or "").strip() == "1":
+        return False
+    return bool(os.environ.get("K_SERVICE"))
+
+
+def _initialize_session_service():
+    firestore_service = FirestoreSessionService()
+    if firestore_service.is_available():
+        return firestore_service
+    return InMemorySessionService()
+
+
+def _validate_session_backend_or_raise(session_backend) -> None:
+    if _persistent_session_backend_required() and not (
+        isinstance(session_backend, FirestoreSessionService)
+        and session_backend.is_available()
+    ):
+        LOGGER.warning(
+            "Persistent Firestore-backed sessions are unavailable in production; "
+            "falling back to in-memory sessions for this frontend instance."
+        )
+
+session_service = _initialize_session_service()
+_validate_session_backend_or_raise(session_service)
+runner: Runner | None = None
 app_metrics = {
     "chat_requests": 0,
     "diagnostics_started": 0,
@@ -78,6 +115,28 @@ def _remote_agent_app_name() -> str:
     return (os.environ.get("ARKAIS_AGENT_APP_NAME") or DEFAULT_AGENT_APP_NAME).strip()
 
 
+def _remote_agent_timeout_seconds() -> float:
+    return float(
+        os.environ.get(
+            "ARKAIS_AGENT_TIMEOUT_SECONDS",
+            str(DEFAULT_AGENT_TIMEOUT_SECONDS),
+        )
+    )
+
+
+def _get_runner() -> Runner:
+    global runner
+    if runner is None:
+        from ark_learning_agent.agent import root_agent
+
+        runner = Runner(
+            app_name=APP_NAME,
+            agent=root_agent,
+            session_service=session_service,
+        )
+    return runner
+
+
 def _firebase_web_config() -> dict[str, str] | None:
     config = {
         "apiKey": os.environ.get("FIREBASE_API_KEY", "").strip(),
@@ -93,6 +152,35 @@ def _firebase_web_config() -> dict[str, str] | None:
     return config if all(config.values()) else None
 
 
+def _production_https_redirect_uri_from_secrets(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return ""
+
+    web = payload.get("web") or {}
+    for uri in web.get("redirect_uris") or []:
+        value = str(uri or "").strip()
+        if value.startswith("https://"):
+            return value
+    return ""
+
+
+def _resolved_auth_callback_url() -> str:
+    for key in ("OAUTH_REDIRECT_URI", "AUTH_CALLBACK_URL"):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+
+    for path in AUTH_CALLBACK_CREDENTIAL_PATHS:
+        value = _production_https_redirect_uri_from_secrets(path)
+        if value:
+            return value
+    return ""
+
+
 def _system_status() -> dict[str, Any]:
     firebase_web = _firebase_web_config()
     firebase_project = (
@@ -102,16 +190,19 @@ def _system_status() -> dict[str, Any]:
         or ""
     ).strip()
     oauth_ready = (BASE_DIR / "ark_learning_agent" / "credentials.json").is_file()
-    auth_callback_url = (os.environ.get("AUTH_CALLBACK_URL") or "").strip()
+    auth_callback_url = _resolved_auth_callback_url()
     vertex_enabled = (os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") or "").strip() == "1"
     cloud_run_ready = bool(os.environ.get("PORT") or os.environ.get("K_SERVICE"))
     firestore_mode = "sqlite_fallback" if (os.environ.get("ARKAIS_FORCE_SQLITE") or "").strip() == "1" else "firestore_preferred"
+    session_backend = "firestore" if isinstance(session_service, FirestoreSessionService) and session_service.is_available() else "in_memory_fallback"
+    persistent_sessions_required = _persistent_session_backend_required()
     return {
         "status": "success",
         "stack": {
             "frontend": "Cloud Run compatible Python server",
             "agent_runtime": "Google ADK",
             "database_mode": firestore_mode,
+            "session_backend": session_backend,
             "model_routing": "Vertex AI Gemini" if vertex_enabled else "Gemini API or fallback",
         },
         "readiness": {
@@ -121,10 +212,15 @@ def _system_status() -> dict[str, Any]:
             "auth_callback_configured": bool(auth_callback_url),
             "vertex_ai_enabled": vertex_enabled,
             "cloud_run_runtime": cloud_run_ready,
+            "persistent_sessions_required": persistent_sessions_required,
+            "persistent_sessions_ready": session_backend == "firestore",
             "materials_library": True,
             "browser_voice_mode": True,
         },
         "metrics": app_metrics,
+        "integrations": {
+            "auth_callback_url": auth_callback_url,
+        },
         "recommended_next_steps": [
             "Enable Vertex AI and Firestore for the strongest Google-native architecture story.",
             "Deploy the frontend server to Cloud Run and keep Firebase Auth web config in env vars.",
@@ -155,20 +251,62 @@ def _authorization_token(headers) -> str:
     return ""
 
 
-def _resolve_user(payload: dict[str, Any], headers) -> tuple[str, str]:
-    id_token = str(payload.get("idToken", "")).strip() or _authorization_token(headers)
-    fallback_user_id = str(payload.get("userId", "frontend-user")).strip() or "frontend-user"
+def _session_cookie_token(headers) -> str:
+    cookie = SimpleCookie()
+    raw = headers.get("Cookie")
+    if raw:
+        cookie.load(raw)
+    morsel = cookie.get(FIREBASE_SESSION_COOKIE_NAME)
+    if not morsel:
+        return ""
+    return str(morsel.value).strip()
 
+
+def _verify_firebase_id_token_email(id_token: str) -> str:
+    _firebase_admin_app()
+    decoded = firebase_auth.verify_id_token(id_token)
+    email = str(decoded.get("email", "")).strip()
+    if not email:
+        raise PermissionError("Firebase token did not include an email address.")
+    return email
+
+
+def _resolve_authenticated_user(payload: dict[str, Any], headers) -> tuple[str, str]:
+    session_cookie = _session_cookie_token(headers)
+    if session_cookie:
+        try:
+            _firebase_admin_app()
+            decoded = firebase_auth.verify_session_cookie(session_cookie, check_revoked=True)
+            email = str(decoded.get("email", "")).strip()
+            if not email:
+                raise PermissionError("Firebase session did not include an email address.")
+            return email, session_cookie
+        except Exception as exc:
+            raise PermissionError(f"Invalid Firebase session cookie: {exc}") from exc
+
+    id_token = str(payload.get("idToken", "")).strip() or _authorization_token(headers)
     if not id_token:
-        return fallback_user_id, ""
+        return "", ""
 
     try:
-        _firebase_admin_app()
-        decoded = firebase_auth.verify_id_token(id_token)
-        email = str(decoded.get("email", "")).strip()
-        return email or fallback_user_id, id_token
+        return _verify_firebase_id_token_email(id_token), id_token
     except Exception as exc:
         raise PermissionError(f"Invalid Firebase ID token: {exc}") from exc
+
+
+def _display_name_for_user(user_id: str) -> str:
+    normalized = str(user_id).strip()
+    if normalized.startswith("guest:"):
+        return f"Guest {normalized[-6:]}"
+    return normalized
+
+
+def _create_firebase_session_cookie(id_token: str) -> str:
+    _firebase_admin_app()
+    return firebase_auth.create_session_cookie(
+        id_token,
+        expires_in=timedelta(seconds=FIREBASE_SESSION_MAX_AGE_SECONDS),
+    )
 
 
 def _extract_text(content: types.Content | None) -> str:
@@ -190,6 +328,7 @@ async def _run_agent(
     user_timezone: str = "",
     selected_material_ids: list[str] | None = None,
 ) -> str:
+    active_runner = _get_runner()
     if not session_service.get_session_sync(
         app_name=APP_NAME,
         user_id=user_id,
@@ -218,18 +357,34 @@ async def _run_agent(
         if material_context.get("context_text")
         else ""
     )
+    if str(user_id).startswith("guest:"):
+        identity_instruction = (
+            "The active ARKAI browser session is a guest session with app user_id: "
+            f"{user_id}\n"
+            "For ARKAI learning-state tools, use this exact app user_id. For Google Docs, "
+            "Google Calendar, or Google Tasks tools, use the Gmail/user_id the user provided "
+            "for Google authorization if it appears in the conversation. If they have not "
+            "provided one, use this app user_id so the OAuth callback saves credentials to "
+            "the same guest session. Do not call a guest user_id a Gmail address.\n"
+        )
+    else:
+        identity_instruction = (
+            "The active signed-in user for this session is identified by this email address: "
+            f"{user_id}\n"
+            "For any Google Docs, Google Calendar, or Google Tasks action, use this exact "
+            "email address as user_id. Do not ask again for Gmail unless the user explicitly "
+            "wants to change accounts.\n"
+        )
+
     effective_message = (
-        "The active signed-in user for this session is identified by this Gmail address: "
-        f"{user_id}\n"
-        "For any Google Docs, Google Calendar, or Google Tasks action, use this exact Gmail "
-        "address as user_id. Do not ask again for Gmail unless the user explicitly wants to "
-        "change accounts.\n"
+        identity_instruction
+        +
         f"{timezone_info}\n"
         f"{learner_state_block}\n"
         f"{material_context_block}\n"
         f"User message:\n{message}"
     )
-    async for event in runner.run_async(
+    async for event in active_runner.run_async(
         user_id=user_id,
         session_id=session_id,
         new_message=types.Content(
@@ -261,6 +416,58 @@ def _extract_reply_from_adk_events(events: list[dict[str, Any]]) -> str:
     return "\n".join(reply_chunks).strip()
 
 
+def _parse_adk_sse_payload(raw_text: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    data_lines: list[str] = []
+
+    def flush_event() -> None:
+        nonlocal data_lines
+        if not data_lines:
+            return
+        payload = "\n".join(data_lines).strip()
+        data_lines = []
+        if not payload or payload == "[DONE]":
+            return
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+        if isinstance(parsed, list):
+            events.extend(item for item in parsed if isinstance(item, dict))
+        elif isinstance(parsed, dict):
+            events.append(parsed)
+
+    for line in raw_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush_event()
+            continue
+        if stripped.startswith("data:"):
+            data_lines.append(stripped[5:].lstrip())
+
+    flush_event()
+    return events
+
+
+def _extract_adk_events_from_response(response: requests.Response) -> list[dict[str, Any]]:
+    try:
+        parsed = response.json()
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+        if isinstance(parsed, dict):
+            return [parsed]
+    except json.JSONDecodeError:
+        pass
+
+    events = _parse_adk_sse_payload(response.text)
+    if events:
+        return events
+
+    raise RuntimeError(
+        "Remote agent returned a non-JSON response."
+    )
+
+
 def _run_agent_remote(
     user_id: str,
     session_id: str,
@@ -276,6 +483,7 @@ def _run_agent_remote(
     headers = {"Content-Type": "application/json"}
     session_url = f"{base_url}/apps/{app_name}/users/{user_id}/sessions/{session_id}"
     run_url = f"{base_url}/run_sse"
+    timeout_seconds = _remote_agent_timeout_seconds()
 
     session_state: dict[str, Any] = {}
     if user_timezone:
@@ -283,13 +491,13 @@ def _run_agent_remote(
     if selected_material_ids:
         session_state["selected_material_ids"] = selected_material_ids
 
-    session_response = requests.get(session_url, headers=headers, timeout=15)
+    session_response = requests.get(session_url, headers=headers, timeout=timeout_seconds)
     if session_response.status_code == HTTPStatus.NOT_FOUND:
         create_response = requests.post(
             session_url,
             headers=headers,
             json=session_state or None,
-            timeout=15,
+            timeout=timeout_seconds,
         )
         create_response.raise_for_status()
     elif session_response.ok and session_state:
@@ -297,7 +505,7 @@ def _run_agent_remote(
             session_url,
             headers=headers,
             json={"stateDelta": session_state},
-            timeout=15,
+            timeout=timeout_seconds,
         )
         patch_response.raise_for_status()
     else:
@@ -316,18 +524,11 @@ def _run_agent_remote(
             },
             "streaming": False,
         },
-        timeout=float(
-            os.environ.get(
-                "ARKAIS_AGENT_TIMEOUT_SECONDS",
-                str(DEFAULT_AGENT_TIMEOUT_SECONDS),
-            )
-        ),
+        timeout=timeout_seconds,
     )
     run_response.raise_for_status()
 
-    events = run_response.json()
-    if not isinstance(events, list):
-        raise RuntimeError("Remote agent returned an unexpected response shape.")
+    events = _extract_adk_events_from_response(run_response)
 
     reply = _extract_reply_from_adk_events(events)
     if not reply:
@@ -341,7 +542,80 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 class ArkAisHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._pending_cookies: list[str] = []
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+
+    def _cookies(self) -> SimpleCookie:
+        cookie = SimpleCookie()
+        raw = self.headers.get("Cookie")
+        if raw:
+            cookie.load(raw)
+        return cookie
+
+    def _cookie_value(self, name: str) -> str:
+        morsel = self._cookies().get(name)
+        if not morsel:
+            return ""
+        return str(morsel.value).strip()
+
+    def _request_is_secure(self) -> bool:
+        forwarded_proto = str(self.headers.get("X-Forwarded-Proto", "")).strip().lower()
+        return forwarded_proto == "https"
+
+    def _queue_cookie(
+        self,
+        name: str,
+        value: str,
+        *,
+        max_age: int = 60 * 60 * 24 * 365,
+        http_only: bool = True,
+    ) -> None:
+        parts = [f"{name}={value}", "Path=/", f"Max-Age={max_age}", "SameSite=Lax"]
+        if http_only:
+            parts.append("HttpOnly")
+        if self._request_is_secure():
+            parts.append("Secure")
+        self._pending_cookies.append("; ".join(parts))
+
+    def _clear_cookie(self, name: str, *, http_only: bool = True) -> None:
+        self._queue_cookie(name, "", max_age=0, http_only=http_only)
+
+    def _resolve_request_context(
+        self,
+        payload: dict[str, Any] | None = None,
+        *,
+        reset_identity: bool = False,
+        reset_session: bool = False,
+        requested_session_id: str = "",
+        ignore_auth: bool = False,
+    ) -> dict[str, Any]:
+        payload = payload or {}
+        if ignore_auth:
+            authenticated_user_id = ""
+        else:
+            authenticated_user_id, _ = _resolve_authenticated_user(payload, self.headers)
+        identity = get_or_create_browser_identity(
+            client_id=self._cookie_value(CLIENT_COOKIE_NAME),
+            authenticated_user_id=authenticated_user_id,
+            reset_identity=reset_identity,
+        )
+        session = get_or_create_chat_session(
+            client_id=str(identity["client_id"]),
+            user_id=str(identity["user_id"]),
+            session_id=requested_session_id or self._cookie_value(SESSION_COOKIE_NAME),
+            reset_session=reset_session,
+        )
+
+        self._queue_cookie(CLIENT_COOKIE_NAME, str(identity["client_id"]))
+        self._queue_cookie(SESSION_COOKIE_NAME, str(session["session_id"]))
+
+        user_id = str(identity["user_id"])
+        return {
+            "user_id": user_id,
+            "session_id": str(session["session_id"]),
+            "is_anonymous": user_id.startswith("guest:"),
+            "display_name": _display_name_for_user(user_id),
+        }
 
     def do_GET(self) -> None:
         if self.path in {"/", "/index.html"}:
@@ -358,95 +632,96 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 },
             )
             return
+        elif self.path.startswith("/api/session"):
+            try:
+                context = self._resolve_request_context()
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "status": "success",
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            )
+            return
         elif self.path == "/api/system-status":
             self._write_json(HTTPStatus.OK, _system_status())
             return
         elif self.path.startswith("/api/demo-kit"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
-            except PermissionError:
-                user_id = parse_qs(urlparse(self.path).query).get("userId", ["frontend-user"])[0] or "frontend-user"
-            self._write_json(HTTPStatus.OK, get_demo_kit(user_id))
+                context = self._resolve_request_context()
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+            self._write_json(HTTPStatus.OK, get_demo_kit(context["user_id"]))
             return
         elif self.path.startswith("/api/learner-state"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            self._write_json(HTTPStatus.OK, get_learner_state(user_id))
+            self._write_json(HTTPStatus.OK, get_learner_state(context["user_id"]))
             return
         elif self.path.startswith("/api/mastery"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            self._write_json(HTTPStatus.OK, get_mastery_snapshot(user_id))
+            self._write_json(HTTPStatus.OK, get_mastery_snapshot(context["user_id"]))
             return
         elif self.path.startswith("/api/roadmap"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            result = get_roadmap(user_id)
+            result = get_roadmap(context["user_id"])
             status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.NOT_FOUND
             self._write_json(status, result)
             return
         elif self.path.startswith("/api/materials"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            self._write_json(HTTPStatus.OK, list_learning_materials(user_id))
+            self._write_json(HTTPStatus.OK, list_learning_materials(context["user_id"]))
             return
         elif self.path.startswith("/api/intervention"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            self._write_json(HTTPStatus.OK, get_intervention_plan(user_id))
+            self._write_json(HTTPStatus.OK, get_intervention_plan(context["user_id"]))
             return
         elif self.path.startswith("/api/evaluation"):
-            user_id = ""
             try:
-                parsed = urlparse(self.path)
-                user_id = parse_qs(parsed.query).get("userId", [""])[0]
-                user_id, _ = _resolve_user({"userId": user_id}, self.headers)
+                context = self._resolve_request_context()
             except PermissionError as exc:
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
                 return
-            self._write_json(HTTPStatus.OK, get_evaluation_snapshot(user_id))
+            self._write_json(HTTPStatus.OK, get_evaluation_snapshot(context["user_id"]))
             return
         super().do_GET()
 
     def do_POST(self) -> None:
         if self.path not in {
+            "/api/session",
+            "/api/auth/session",
+            "/api/auth/logout",
             "/api/chat",
             "/api/diagnostic/start",
             "/api/diagnostic/submit",
             "/api/roadmap/generate",
+            "/api/roadmap/delete",
             "/api/roadmap/session/update",
             "/api/materials/upload",
             "/api/materials/tutor",
@@ -457,22 +732,96 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             "/api/history/delete-all",
             "/api/report/generate",
             "/api/report/save-google-doc",
+            "/api/assessment/save-google-doc",
         }:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length > 20 * 1024 * 1024:  # 20 MB limit
+                self._write_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Payload exceeds the 20MB limit."})
+                return
             raw_body = self.rfile.read(length)
             payload = json.loads(raw_body or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON body."})
             return
 
+        if self.path == "/api/auth/session":
+            id_token = str(payload.get("idToken", "")).strip() or _authorization_token(self.headers)
+            if not id_token:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Missing Firebase ID token."})
+                return
+            try:
+                user_id = _verify_firebase_id_token_email(id_token)
+                session_cookie = _create_firebase_session_cookie(id_token)
+                self._queue_cookie(
+                    FIREBASE_SESSION_COOKIE_NAME,
+                    session_cookie,
+                    max_age=FIREBASE_SESSION_MAX_AGE_SECONDS,
+                    http_only=True,
+                )
+                context = self._resolve_request_context(payload)
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "status": "success",
+                    "userId": user_id,
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": False,
+                },
+            )
+            return
+
+        if self.path == "/api/auth/logout":
+            self._clear_cookie(FIREBASE_SESSION_COOKIE_NAME)
+            context = self._resolve_request_context(
+                payload,
+                reset_identity=bool(payload.get("resetIdentity", True)),
+                reset_session=bool(payload.get("resetSession", True)),
+                ignore_auth=True,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "status": "success",
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            )
+            return
+
         try:
-            user_id, _ = _resolve_user(payload, self.headers)
+            context = self._resolve_request_context(
+                payload,
+                reset_identity=bool(payload.get("resetIdentity", False)),
+                reset_session=bool(payload.get("resetSession", False)),
+                requested_session_id=str(payload.get("sessionId", "")).strip(),
+            )
         except PermissionError as exc:
             self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+            return
+        user_id = context["user_id"]
+
+        if self.path == "/api/session":
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "status": "success",
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            )
             return
 
         if self.path == "/api/diagnostic/start":
@@ -516,6 +865,12 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 revision_reason=str(payload.get("revisionReason", "")).strip(),
             )
             status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/roadmap/delete":
+            result = delete_roadmap(user_id=user_id)
+            status = HTTPStatus.OK if result.get("status") == "success" else HTTPStatus.NOT_FOUND
             self._write_json(status, result)
             return
 
@@ -609,6 +964,8 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/report/save-google-doc":
             app_metrics["reports_saved_to_docs"] += 1
+            from ark_learning_agent.productivity_mcp_server import save_weekly_report_doc
+
             result = save_weekly_report_doc(
                 user_id=user_id,
                 title=str(payload.get("title", "")).strip(),
@@ -620,8 +977,23 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             self._write_json(status, result)
             return
 
+        if self.path == "/api/assessment/save-google-doc":
+            from ark_learning_agent.productivity_mcp_server import save_assessment_doc
+
+            result = save_assessment_doc(
+                user_id=user_id,
+                assessment_id=str(payload.get("assessmentId", "")).strip(),
+                title=str(payload.get("title", "")).strip(),
+            )
+            if result.get("status") in {"success", "auth_required"}:
+                status = HTTPStatus.OK
+            else:
+                status = HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
         message = str(payload.get("message", "")).strip()
-        session_id = str(payload.get("sessionId", "")).strip()
+        session_id = context["session_id"]
         user_timezone = str(payload.get("timezone", "")).strip()
         selected_material_ids = [
             str(item) for item in (payload.get("selectedMaterialIds") or []) if str(item).strip()
@@ -631,12 +1003,21 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
         if not message:
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Missing message."})
             return
-        if not session_id:
-            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Missing sessionId."})
-            return
 
         try:
             app_metrics["chat_requests"] += 1
+            append_chat_message(
+                user_id=user_id,
+                session_id=session_id,
+                role="user",
+                author="user",
+                content=message,
+                metadata={
+                    "timezone": user_timezone,
+                    "selected_material_ids": selected_material_ids,
+                    "input_mode": input_mode,
+                },
+            )
             if _remote_agent_base_url():
                 reply = _run_agent_remote(
                     user_id=user_id,
@@ -655,14 +1036,16 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                             user_timezone=user_timezone,
                             selected_material_ids=selected_material_ids,
                         ),
-                        timeout=float(
-                            os.environ.get(
-                                "ARKAIS_AGENT_TIMEOUT_SECONDS",
-                                str(DEFAULT_AGENT_TIMEOUT_SECONDS),
-                            )
-                        ),
+                        timeout=_remote_agent_timeout_seconds(),
                     )
                 )
+            append_chat_message(
+                user_id=user_id,
+                session_id=session_id,
+                role="assistant",
+                author="ARKAI",
+                content=reply,
+            )
         except TimeoutError:
             self._write_json(
                 HTTPStatus.GATEWAY_TIMEOUT,
@@ -690,7 +1073,18 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-        self._write_json(HTTPStatus.OK, {"reply": reply})
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "reply": reply,
+                "session": {
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            },
+        )
 
     def translate_path(self, path: str) -> str:
         path = path.split("?", 1)[0].split("#", 1)[0]
@@ -710,6 +1104,9 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        for cookie in self._pending_cookies:
+            self.send_header("Set-Cookie", cookie)
+        self._pending_cookies.clear()
         self.end_headers()
         self.wfile.write(encoded)
 

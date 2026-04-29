@@ -13,6 +13,7 @@ from google.genai import types
 
 import firebase_admin
 from firebase_admin import firestore
+from google.cloud import firestore as google_cloud_firestore
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,6 +22,7 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 SQLITE_DB_PATH = BASE_DIR / "learning_agent.db"
 QUIZ_MODEL = os.environ.get("ARKAIS_ASSESSMENT_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+USERS_COLLECTION = "users"
 
 
 def _utc_now() -> str:
@@ -68,7 +70,16 @@ def get_firestore_client():
             app = firebase_admin.initialize_app()
 
     try:
-        db = firestore.client(app=app)
+        database_id = (os.environ.get("FIRESTORE_DATABASE") or "").strip()
+        if database_id:
+            project_id = (
+                os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or os.environ.get("GCLOUD_PROJECT")
+                or ""
+            ).strip()
+            db = google_cloud_firestore.Client(project=project_id or None, database=database_id)
+        else:
+            db = firestore.client(app=app)
         if not _running_on_cloud_run():
             db.collection("_healthcheck").document("ping").get()
         return db
@@ -217,7 +228,49 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def _user_doc(db, user_id: str):
-    return db.collection("learners").document(user_id)
+    return db.collection(USERS_COLLECTION).document(user_id)
+
+
+def _user_profile_doc(db, user_id: str):
+    return _user_doc(db, user_id).collection("profile").document("current")
+
+
+def _user_mastery_doc(db, user_id: str):
+    return _user_doc(db, user_id).collection("mastery").document("current")
+
+
+def _user_roadmap_doc(db, user_id: str):
+    return _user_doc(db, user_id).collection("roadmaps").document("current")
+
+
+def _user_progress_collection(db, user_id: str):
+    return _user_doc(db, user_id).collection("progress")
+
+
+def _user_notes_collection(db, user_id: str):
+    return _user_doc(db, user_id).collection("notes")
+
+
+def _user_assessments_collection(db, user_id: str):
+    return _user_doc(db, user_id).collection("assessments")
+
+
+def _user_reports_collection(db, user_id: str):
+    return _user_doc(db, user_id).collection("reports")
+
+
+def _touch_user_doc(db, user_id: str, *, extra: dict[str, Any] | None = None) -> None:
+    is_anonymous = str(user_id).startswith("guest:")
+    payload = {
+        "user_id": user_id,
+        "is_anonymous": is_anonymous,
+        "updated_at": _utc_now(),
+    }
+    if is_anonymous:
+        payload["expires_at"] = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    if extra:
+        payload.update(extra)
+    _user_doc(db, user_id).set(payload, merge=True)
 
 
 def _default_question_set(topic: str, level: str, question_count: int) -> list[dict[str, Any]]:
@@ -435,7 +488,7 @@ def _public_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _load_mastery(user_id: str) -> dict[str, Any]:
     db = get_firestore_client()
     if db:
-        snapshot = _user_doc(db, user_id).get()
+        snapshot = _user_mastery_doc(db, user_id).get()
         if snapshot.exists:
             return (snapshot.to_dict() or {}).get("mastery") or {"topics": {}, "overall_score": 0.0}
         return {"topics": {}, "overall_score": 0.0}
@@ -461,7 +514,11 @@ def _save_mastery(user_id: str, mastery: dict[str, Any]) -> None:
     mastery["updated_at"] = _utc_now()
     db = get_firestore_client()
     if db:
-        _user_doc(db, user_id).set({"mastery": mastery, "updated_at": mastery["updated_at"]}, merge=True)
+        _user_mastery_doc(db, user_id).set(
+            {"mastery": mastery, "updated_at": mastery["updated_at"]},
+            merge=True,
+        )
+        _touch_user_doc(db, user_id)
         return
 
     init_sqlite_fallback()
@@ -569,14 +626,14 @@ def save_learner_profile(
 
     db = get_firestore_client()
     if db:
-        doc = _user_doc(db, user_id)
-        doc.set(
+        _user_profile_doc(db, user_id).set(
             {
                 "profile": profile,
                 "updated_at": profile["updated_at"],
             },
             merge=True,
         )
+        _touch_user_doc(db, user_id)
         return {
             "status": "success",
             "message": f"Profile saved for user {user_id}",
@@ -615,7 +672,7 @@ def save_learner_profile(
 def get_learner_profile(user_id: str) -> dict[str, Any]:
     db = get_firestore_client()
     if db:
-        snapshot = _user_doc(db, user_id).get()
+        snapshot = _user_profile_doc(db, user_id).get()
         if not snapshot.exists:
             return {"status": "not_found", "message": "No learner profile found"}
         profile = (snapshot.to_dict() or {}).get("profile") or {}
@@ -669,9 +726,8 @@ def save_learning_progress(
 
     db = get_firestore_client()
     if db:
-        doc = _user_doc(db, user_id)
-        doc.collection("progress").add(payload)
-        doc.set({"updated_at": created_at}, merge=True)
+        _user_progress_collection(db, user_id).add(payload)
+        _touch_user_doc(db, user_id)
         return {
             "status": "success",
             "message": f"Progress saved for user {user_id}",
@@ -703,8 +759,7 @@ def get_learning_history(user_id: str, limit: int = 10) -> dict[str, Any]:
     if db:
         records = []
         docs = (
-            _user_doc(db, user_id)
-            .collection("progress")
+            _user_progress_collection(db, user_id)
             .order_by("created_at", direction=firestore.Query.DESCENDING)
             .limit(limit)
             .stream()
@@ -751,7 +806,7 @@ def delete_learning_history_item(user_id: str, record_id: str) -> dict[str, Any]
 
     db = get_firestore_client()
     if db:
-        record_ref = _user_doc(db, user_id).collection("progress").document(normalized_record_id)
+        record_ref = _user_progress_collection(db, user_id).document(normalized_record_id)
         snapshot = record_ref.get()
         if not snapshot.exists:
             return {"status": "not_found", "message": "History record not found."}
@@ -789,7 +844,7 @@ def delete_learning_history_item(user_id: str, record_id: str) -> dict[str, Any]
 def delete_all_learning_history(user_id: str) -> dict[str, Any]:
     db = get_firestore_client()
     if db:
-        docs = list(_user_doc(db, user_id).collection("progress").stream())
+        docs = list(_user_progress_collection(db, user_id).stream())
         for doc in docs:
             doc.reference.delete()
         return {
@@ -830,9 +885,8 @@ def save_study_note(user_id: str, topic: str, note: str) -> dict[str, Any]:
 
     db = get_firestore_client()
     if db:
-        doc = _user_doc(db, user_id)
-        doc.collection("notes").add(payload)
-        doc.set({"updated_at": created_at}, merge=True)
+        _user_notes_collection(db, user_id).add(payload)
+        _touch_user_doc(db, user_id)
         return {
             "status": "success",
             "message": f"Note saved for {user_id}",
@@ -865,8 +919,7 @@ def list_study_notes(user_id: str, limit: int = 10) -> dict[str, Any]:
     if db:
         notes = []
         docs = (
-            _user_doc(db, user_id)
-            .collection("notes")
+            _user_notes_collection(db, user_id)
             .order_by("created_at", direction=firestore.Query.DESCENDING)
             .limit(limit)
             .stream()
@@ -949,7 +1002,8 @@ def create_assessment(
 
     db = get_firestore_client()
     if db:
-        _user_doc(db, user_id).collection("assessments").document(assessment_id).set(record)
+        _user_assessments_collection(db, user_id).document(assessment_id).set(record)
+        _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
         conn = sqlite3.connect(SQLITE_DB_PATH)
@@ -1069,7 +1123,8 @@ def create_custom_assessment(
 
     db = get_firestore_client()
     if db:
-        _user_doc(db, user_id).collection("assessments").document(assessment_id).set(record)
+        _user_assessments_collection(db, user_id).document(assessment_id).set(record)
+        _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
         conn = sqlite3.connect(SQLITE_DB_PATH)
@@ -1176,7 +1231,7 @@ Return JSON only with:
 def _get_assessment_record(user_id: str, assessment_id: str) -> dict[str, Any] | None:
     db = get_firestore_client()
     if db:
-        snapshot = _user_doc(db, user_id).collection("assessments").document(assessment_id).get()
+        snapshot = _user_assessments_collection(db, user_id).document(assessment_id).get()
         if snapshot.exists:
             return snapshot.to_dict()
         return None
@@ -1311,7 +1366,7 @@ def submit_assessment(
     submitted_at = _utc_now()
     db = get_firestore_client()
     if db:
-        _user_doc(db, user_id).collection("assessments").document(assessment_id).set(
+        _user_assessments_collection(db, user_id).document(assessment_id).set(
             {
                 "status": "submitted",
                 "answers": normalized_answers,
@@ -1321,6 +1376,7 @@ def submit_assessment(
             },
             merge=True,
         )
+        _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
         conn = sqlite3.connect(SQLITE_DB_PATH)
@@ -1379,7 +1435,7 @@ def get_mastery_snapshot(user_id: str) -> dict[str, Any]:
 def _load_roadmap(user_id: str) -> dict[str, Any] | None:
     db = get_firestore_client()
     if db:
-        snapshot = _user_doc(db, user_id).get()
+        snapshot = _user_roadmap_doc(db, user_id).get()
         if snapshot.exists:
             return (snapshot.to_dict() or {}).get("roadmap")
         return None
@@ -1402,7 +1458,11 @@ def _save_roadmap(user_id: str, roadmap: dict[str, Any]) -> None:
     roadmap["updated_at"] = _utc_now()
     db = get_firestore_client()
     if db:
-        _user_doc(db, user_id).set({"roadmap": roadmap, "updated_at": roadmap["updated_at"]}, merge=True)
+        _user_roadmap_doc(db, user_id).set(
+            {"roadmap": roadmap, "updated_at": roadmap["updated_at"]},
+            merge=True,
+        )
+        _touch_user_doc(db, user_id)
         return
 
     init_sqlite_fallback()
@@ -1417,6 +1477,28 @@ def _save_roadmap(user_id: str, roadmap: dict[str, Any]) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def delete_roadmap(user_id: str) -> dict[str, Any]:
+    db = get_firestore_client()
+    if db:
+        snapshot = _user_roadmap_doc(db, user_id).get()
+        if not snapshot.exists:
+            return {"status": "not_found", "message": "No roadmap found."}
+        _user_roadmap_doc(db, user_id).delete()
+        _touch_user_doc(db, user_id)
+        return {"status": "success", "message": "Roadmap deleted."}
+
+    init_sqlite_fallback()
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM learner_roadmaps WHERE user_id = ?", (user_id,))
+    deleted_count = cur.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted_count:
+        return {"status": "not_found", "message": "No roadmap found."}
+    return {"status": "success", "message": "Roadmap deleted."}
 
 
 def _today_iso_date() -> str:
@@ -1847,6 +1929,14 @@ def generate_weekly_report(user_id: str) -> dict[str, Any]:
         note_text.extend(["", "Recommended actions:"] + [f"- {item}" for item in report["recommended_actions"]])
 
     report["note_text"] = "\n".join(note_text)
+    report["report_id"] = str(uuid.uuid4())
+    report["created_at"] = _utc_now()
+
+    db = get_firestore_client()
+    if db:
+        _user_reports_collection(db, user_id).document(report["report_id"]).set(report)
+        _touch_user_doc(db, user_id)
+
     return report
 
 
@@ -1864,7 +1954,7 @@ def get_evaluation_snapshot(user_id: str) -> dict[str, Any]:
     progress_count = len(history)
     grounding_available = False
     try:
-        from .materials import list_learning_materials
+        from materials import list_learning_materials
 
         grounding_available = bool(list_learning_materials(user_id).get("materials"))
     except Exception:

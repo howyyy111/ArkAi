@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8080 \
+    PORT=8000 \
     ARKAIS_AGENT_HOST=0.0.0.0 \
     ARKAIS_AGENT_WITH_UI=true
 
@@ -15,6 +15,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . /app
 
-EXPOSE 8080
+EXPOSE 8000
 
 CMD ["python3", "main.py"]

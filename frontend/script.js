@@ -10,28 +10,37 @@ import {
 const chatForm = document.getElementById("chat-form");
 const messages = document.getElementById("messages");
 const promptInput = document.getElementById("prompt");
-const seedButton = document.getElementById("seed-button");
-const changeGmailButton = document.getElementById("change-gmail-button");
 const newSessionButton = document.getElementById("new-session-button");
 const submitButton = document.getElementById("submit-button");
 const usernameModal = document.getElementById("username-modal");
+const closeModalButton = document.getElementById("close-modal-button");
 const usernameForm = document.getElementById("username-form");
 const usernameInput = document.getElementById("username-input");
 const googleSigninButton = document.getElementById("google-signin-button");
 const authHelper = document.getElementById("auth-helper");
 const authPill = document.getElementById("auth-pill");
+const authPillLabel = document.getElementById("auth-pill-label");
+const profileDropdown = document.getElementById("profile-dropdown");
+const displayEmail = document.getElementById("display-email");
+const headerChangeAccount = document.getElementById("header-change-account");
+const tutorIdentity = document.getElementById("tutor-identity");
 const stateTitle = document.getElementById("state-title");
 const stateSummary = document.getElementById("state-summary");
+const sidebarProgressSummary = document.getElementById("sidebar-progress-summary");
 const startDiagnosticButton = document.getElementById("start-diagnostic-button");
+const planHome = document.getElementById("plan-home");
+const diagnosticWorkspace = document.getElementById("diagnostic-workspace");
+const roadmapWorkspace = document.getElementById("roadmap-workspace");
 const diagnosticTopicInput = document.getElementById("diagnostic-topic");
 const diagnosticGoalInput = document.getElementById("diagnostic-goal");
 const diagnosticTimeInput = document.getElementById("diagnostic-time");
 const diagnosticLevelSelect = document.getElementById("diagnostic-level");
+const diagnosticHomeStatus = document.getElementById("diagnostic-home-status");
 const assessmentStatus = document.getElementById("assessment-status");
 const diagnosticForm = document.getElementById("diagnostic-form");
 const diagnosticQuestions = document.getElementById("diagnostic-questions");
 const diagnosticResult = document.getElementById("diagnostic-result");
-const downloadAssessmentPdfButton = document.getElementById("download-assessment-pdf-button");
+const saveAssessmentGoogleDocButton = document.getElementById("save-assessment-google-doc-button");
 const masteryScore = document.getElementById("mastery-score");
 const masteryTopics = document.getElementById("mastery-topics");
 const generateRoadmapButton = document.getElementById("generate-roadmap-button");
@@ -40,11 +49,14 @@ const roadmapTopicInput = document.getElementById("roadmap-topic");
 const roadmapGoalInput = document.getElementById("roadmap-goal");
 const roadmapTimeInput = document.getElementById("roadmap-time");
 const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
+const roadmapHomeStatus = document.getElementById("roadmap-home-status");
 const roadmapStatus = document.getElementById("roadmap-status");
 const roadmapMode = document.getElementById("roadmap-mode");
 const roadmapSummary = document.getElementById("roadmap-summary");
 const roadmapSessionDetail = document.getElementById("roadmap-session-detail");
 const roadmapBoard = document.getElementById("roadmap-board");
+const viewRoadmapButton = document.getElementById("view-roadmap-button");
+const deleteRoadmapButton = document.getElementById("delete-roadmap-button");
 const materialFileInput = document.getElementById("material-file");
 const materialTextInput = document.getElementById("material-text");
 const materialQueryInput = document.getElementById("material-query");
@@ -57,6 +69,7 @@ const createMaterialsMockTestButton = document.getElementById("create-materials-
 const deleteAllMaterialsButton = document.getElementById("delete-all-materials-button");
 const materialsStatus = document.getElementById("materials-status");
 const materialsLibrary = document.getElementById("materials-library");
+const materialsLibrarySummary = document.getElementById("materials-library-summary");
 const materialsSelectionSummary = document.getElementById("materials-selection-summary");
 const voiceInputButton = document.getElementById("voice-input-button");
 const voiceReplyButton = document.getElementById("voice-reply-button");
@@ -67,35 +80,23 @@ const generateReportButton = document.getElementById("generate-report-button");
 const interventionRisk = document.getElementById("intervention-risk");
 const interventionSummary = document.getElementById("intervention-summary");
 const evaluationBoard = document.getElementById("evaluation-board");
+const insightsHome = document.getElementById("insights-home");
+const reportWorkspace = document.getElementById("report-workspace");
 const reportBoard = document.getElementById("report-board");
-const overviewMastery = document.getElementById("overview-mastery");
-const overviewMasteryCaption = document.getElementById("overview-mastery-caption");
-const overviewRoadmap = document.getElementById("overview-roadmap");
-const overviewRoadmapCaption = document.getElementById("overview-roadmap-caption");
-const overviewMaterials = document.getElementById("overview-materials");
-const overviewMaterialsCaption = document.getElementById("overview-materials-caption");
-const overviewRisk = document.getElementById("overview-risk");
-const overviewRiskCaption = document.getElementById("overview-risk-caption");
-const overviewBlurb = document.getElementById("overview-blurb");
-const refreshSystemButton = document.getElementById("refresh-system-button");
-const systemStackTitle = document.getElementById("system-stack-title");
-const systemStackSummary = document.getElementById("system-stack-summary");
-const systemReadinessBoard = document.getElementById("system-readiness-board");
-const refreshDemoKitButton = document.getElementById("refresh-demo-kit-button");
-const demoPitchTitle = document.getElementById("demo-pitch-title");
-const demoPitchCopy = document.getElementById("demo-pitch-copy");
-const demoMetricsBoard = document.getElementById("demo-metrics-board");
-const demoPersonasBoard = document.getElementById("demo-personas-board");
-const demoScriptBoard = document.getElementById("demo-script-board");
 const focusTabs = Array.from(document.querySelectorAll("[data-view-target]"));
 const focusViews = Array.from(document.querySelectorAll("[data-view]"));
+const showHistoryButton = document.getElementById("show-history-button");
+const shareChatButton = document.getElementById("share-chat-button");
+const historyModal = document.getElementById("history-modal");
+const closeHistoryButton = document.getElementById("close-history-button");
+const historyListModal = document.getElementById("history-list-modal");
 
-const sessionStorageKey = "arkai-session-id";
-const usernameStorageKey = "arkai-user-email";
 const idTokenStorageKey = "arkai-id-token";
 const historyStorageKeyPrefix = "arkai-history-";
 const activeViewStorageKey = "arkai-active-view";
 const requestTimeoutMs = 90000;
+const maxMaterialFileSizeBytes = 5 * 1024 * 1024;
+const maxMaterialLibrarySizeBytes = 25 * 1024 * 1024;
 
 let authMode = "email_fallback";
 let firebaseAuthClient = null;
@@ -116,6 +117,14 @@ let selectedRoadmapSessionKey = "";
 let previousSessionsExpanded = false;
 let selectedHistoryItemKey = "";
 let previousResourcesExpanded = false;
+let activeSession = {
+  userId: "",
+  sessionId: "",
+  displayName: "",
+  isAnonymous: true,
+};
+let isLoggingOutServerSession = false;
+let shouldClearServerSessionOnFirebaseSignOut = false;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -250,7 +259,7 @@ function buildAssessmentPdfBlob(assessment) {
 
 function updateAssessmentActions() {
   const hasAssessment = Boolean(activeAssessment?.assessment_id);
-  downloadAssessmentPdfButton.classList.toggle("hidden", !hasAssessment);
+  saveAssessmentGoogleDocButton.classList.toggle("hidden", !hasAssessment);
 }
 
 function buildHistoryItemKey(item) {
@@ -279,6 +288,42 @@ function formatRelativeDays(value) {
     return "1 day ago";
   }
   return `${diffDays} days ago`;
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (!Number.isFinite(size) || size <= 0) {
+    return "";
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+}
+
+function validateSelectedFile(file, { fieldLabel = "File" } = {}) {
+  if (!file) {
+    return null;
+  }
+  if (file.size > maxMaterialFileSizeBytes) {
+    return `${fieldLabel} is too large. Max size is ${formatFileSize(maxMaterialFileSizeBytes)}.`;
+  }
+  return null;
+}
+
+function getCurrentLibraryUsageBytes() {
+  return latestMaterials.reduce((sum, material) => sum + Number(material?.metadata?.size_bytes || 0), 0);
+}
+
+function updateMaterialsLibrarySummary() {
+  if (!materialsLibrarySummary) {
+    return;
+  }
+  const used = getCurrentLibraryUsageBytes();
+  materialsLibrarySummary.textContent = `Files and notes ready for grounded Q&A. ${formatFileSize(used)} used of ${formatFileSize(maxMaterialLibrarySizeBytes)}. Max ${formatFileSize(maxMaterialFileSizeBytes)} each.`;
 }
 
 function getPreviousSessions() {
@@ -348,10 +393,24 @@ function setActiveView(viewName) {
   window.localStorage.setItem(activeViewStorageKey, nextView);
 }
 
+function showPlanWorkspace(workspace = "home") {
+  const target = String(workspace || "home");
+  planHome?.classList.toggle("hidden", target !== "home");
+  diagnosticWorkspace?.classList.toggle("hidden", target !== "diagnostic");
+  roadmapWorkspace?.classList.toggle("hidden", target !== "roadmap");
+}
+
+function showInsightsWorkspace(workspace = "home") {
+  const target = String(workspace || "home");
+  insightsHome?.classList.toggle("hidden", target !== "home");
+  reportWorkspace?.classList.toggle("hidden", target !== "report");
+}
+
 function getHistory() {
   const sid = getSessionId();
+  const uid = getUsername() || "anonymous";
   try {
-    return JSON.parse(window.localStorage.getItem(historyStorageKeyPrefix + sid)) || [];
+    return JSON.parse(window.localStorage.getItem(`${historyStorageKeyPrefix}${uid}-${sid}`)) || [];
   } catch {
     return [];
   }
@@ -359,18 +418,71 @@ function getHistory() {
 
 function saveHistoryItem(role, body) {
   const sid = getSessionId();
+  const uid = getUsername() || "anonymous";
   const hist = getHistory();
   hist.push({ role, body });
-  window.localStorage.setItem(historyStorageKeyPrefix + sid, JSON.stringify(hist));
+  window.localStorage.setItem(`${historyStorageKeyPrefix}${uid}-${sid}`, JSON.stringify(hist));
 }
 
-function clearSessionState() {
-  window.localStorage.removeItem(sessionStorageKey);
-  messages.innerHTML = `
+function buildEmptyStateMarkup() {
+  return `
     <div class="empty-state">
-      Let's begin your Journey!
+      <div class="empty-state-copy">
+        <h4>Start with a small, clear ask.</h4>
+        <p>Choose a prompt below or write your own question.</p>
+      </div>
+      <div class="starter-prompts">
+        <button class="starter-chip" type="button" data-starter-prompt="Teach me Python loops simply with one example.">Teach me Python loops simply</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Quiz me on this topic with 3 short questions.">Quiz me on this topic</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Continue my roadmap session and keep it focused.">Continue my roadmap session</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Turn this into one short lesson and one small exercise.">Give me one lesson and one exercise</button>
+      </div>
     </div>
   `;
+}
+
+function setVoiceStatus(message = "") {
+  if (!voiceStatus) {
+    return;
+  }
+  const text = String(message || "").trim();
+  voiceStatus.textContent = text;
+  voiceStatus.classList.toggle("hidden", !text);
+}
+
+function autoresizePrompt() {
+  if (!promptInput) {
+    return;
+  }
+  promptInput.style.height = "auto";
+  const nextHeight = Math.min(promptInput.scrollHeight, 150);
+  promptInput.style.height = `${Math.max(nextHeight, 36)}px`;
+}
+
+async function clearSessionState() {
+  const previousUserId = getUsername() || "anonymous";
+  const previousSessionId = getSessionId();
+  if (previousSessionId) {
+    window.localStorage.removeItem(`${historyStorageKeyPrefix}${previousUserId}-${previousSessionId}`);
+  }
+  await refreshSession({ resetSession: true });
+  messages.innerHTML = buildEmptyStateMarkup();
+  autoresizePrompt();
+}
+
+async function openAccountSwitcher() {
+  closeProfileDropdown();
+  if (firebaseAuthClient && firebaseAuthClient.currentUser) {
+    await signOut(firebaseAuthClient);
+  }
+  await logoutServerSession();
+  updateAuthPill(activeSession.displayName || "Guest session", true);
+  openUsernameModal(false);
+  await refreshLearnerState();
+  await refreshMasteryBoard();
+  await refreshRoadmap();
+  await refreshMaterials();
+  await refreshInsights();
 }
 
 function restoreSession() {
@@ -384,12 +496,7 @@ function restoreSession() {
 }
 
 function getSessionId() {
-  let sessionId = window.localStorage.getItem(sessionStorageKey);
-  if (!sessionId) {
-    sessionId = window.crypto.randomUUID();
-    window.localStorage.setItem(sessionStorageKey, sessionId);
-  }
-  return sessionId;
+  return activeSession.sessionId || "";
 }
 
 function sanitizeUsername(value) {
@@ -401,13 +508,7 @@ function isValidEmail(value) {
 }
 
 function getUsername() {
-  return sanitizeUsername(window.localStorage.getItem(usernameStorageKey) || "");
-}
-
-function setUsername(value) {
-  const username = sanitizeUsername(value);
-  window.localStorage.setItem(usernameStorageKey, username);
-  return username;
+  return sanitizeUsername(activeSession.userId || "");
 }
 
 function getIdToken() {
@@ -420,6 +521,44 @@ function setIdToken(value) {
   } else {
     window.localStorage.removeItem(idTokenStorageKey);
   }
+}
+
+function applySession(session) {
+  activeSession = {
+    userId: session?.userId || "",
+    sessionId: session?.sessionId || "",
+    displayName: session?.displayName || "",
+    isAnonymous: Boolean(session?.isAnonymous),
+  };
+  shouldClearServerSessionOnFirebaseSignOut = !activeSession.isAnonymous;
+  syncSessionChrome();
+  return activeSession;
+}
+
+async function refreshSession(options = {}) {
+  const loadSession = async () => {
+    const method = Object.keys(options).length ? "POST" : "GET";
+    return await fetch("/api/session", {
+      method,
+      headers: {
+        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+        ...buildAuthHeaders(),
+      },
+      body: method === "POST" ? JSON.stringify(options) : undefined,
+    });
+  };
+
+  let response = await loadSession();
+  if (response.status === 401 && getIdToken()) {
+    setIdToken("");
+    response = await loadSession();
+  }
+
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || "Could not establish a user session.");
+  }
+  return applySession(data);
 }
 
 function openUsernameModal(prefill = true) {
@@ -436,17 +575,129 @@ function closeUsernameModal() {
   usernameModal.setAttribute("aria-hidden", "true");
 }
 
+if (closeModalButton) {
+  closeModalButton.addEventListener("click", () => {
+    // Only allow closing if we already have a session (don't let them bypass initial setup if required)
+    if (activeSession || getUsername()) {
+      closeUsernameModal();
+    } else {
+      // If they somehow have no session at all, just fall back to guest session
+      usernameForm.dispatchEvent(new Event("submit"));
+    }
+  });
+}
+
 function updateAuthPill(label, subtle = false) {
-  authPill.textContent = label;
+  const value = String(label || "").trim() || "Guest session";
+  authPill.setAttribute("aria-label", value);
+  authPill.setAttribute("title", value);
   authPill.classList.toggle("subtle", subtle);
+  if (authPillLabel) {
+    authPillLabel.textContent = value;
+  }
+  if (displayEmail) {
+    displayEmail.textContent = value;
+  }
+  if (tutorIdentity) {
+    tutorIdentity.textContent = value;
+  }
+}
+
+function syncSessionChrome() {
+  const label = activeSession.displayName || activeSession.userId || "Guest session";
+  if (displayEmail) {
+    displayEmail.textContent = label;
+  }
+  if (authPillLabel) {
+    authPillLabel.textContent = label;
+  }
+  if (tutorIdentity) {
+    tutorIdentity.textContent = label;
+  }
+  if (authPill) {
+    authPill.setAttribute("aria-label", label);
+    authPill.setAttribute("title", label);
+  }
+}
+
+function closeProfileDropdown() {
+  if (!profileDropdown) {
+    return;
+  }
+  profileDropdown.classList.add("hidden");
+}
+
+function toggleProfileDropdown(forceOpen) {
+  if (!profileDropdown) {
+    return;
+  }
+  const shouldOpen = typeof forceOpen === "boolean"
+    ? forceOpen
+    : profileDropdown.classList.contains("hidden");
+  profileDropdown.classList.toggle("hidden", !shouldOpen);
+}
+
+function openHistoryModal() {
+  if (!historyModal || !historyListModal) {
+    return;
+  }
+  const sessions = getPreviousSessions();
+  historyListModal.innerHTML = sessions.length
+    ? `
+        <div class="history-modal-actions">
+          <button class="ghost-button subtle-action" type="button" data-history-modal-delete-all="true">
+            Delete all saved sessions
+          </button>
+        </div>
+        ${sessions.map((item) => `
+          <article class="history-item history-item-modal${selectedHistoryItemKey === item.key ? " is-selected" : ""}">
+            <button
+              class="history-item-main"
+              type="button"
+              data-history-modal-open="${escapeHtml(item.key)}"
+            >
+              <strong>${escapeHtml(item.topic)}</strong>
+              <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
+            </button>
+            <button
+              class="mini-button"
+              type="button"
+              data-history-modal-delete="${escapeHtml(item.key)}"
+            >
+              Delete
+            </button>
+          </article>
+        `).join("")}
+      `
+    : `<p class="mastery-empty">No saved sessions yet.</p>`;
+  historyModal.classList.add("open");
+  historyModal.setAttribute("aria-hidden", "false");
+}
+
+function closeHistoryModal() {
+  if (!historyModal) {
+    return;
+  }
+  historyModal.classList.remove("open");
+  historyModal.setAttribute("aria-hidden", "true");
+}
+
+function buildShareTranscript() {
+  const transcript = getHistory();
+  if (!transcript.length) {
+    return "";
+  }
+  return transcript
+    .map((entry) => `${entry.role === "user" ? activeSession.displayName || getUsername() || "You" : "ARKAI"}: ${entry.body}`)
+    .join("\n\n");
 }
 
 async function refreshLearnerState() {
   const username = getUsername();
   if (!username) {
     latestLearnerState = null;
-    stateTitle.textContent = "New learner";
-    stateSummary.textContent = "Sign in to begin.";
+    stateTitle.textContent = "Start with one clear question";
+    stateSummary.textContent = "Ask a question or continue a session.";
     refreshOverview();
     return;
   }
@@ -461,35 +712,29 @@ async function refreshLearnerState() {
     }
     latestLearnerState = data;
 
-    const topic = data.current_topic || data.profile?.topic || "Personalized study plan";
+    const topic = data.current_topic || data.profile?.topic || "Your current learning focus";
     stateTitle.textContent = topic;
 
     const details = [];
     if (data.profile?.level) {
-      details.push(`Level: ${data.profile.level}`);
+      details.push(data.profile.level);
     }
     if (data.profile?.available_time) {
-      details.push(`Daily time: ${data.profile.available_time} minutes`);
-    }
-    if (data.completed_activities) {
-      details.push(`Activities saved: ${data.completed_activities}`);
-    }
-    if (data.weak_topics?.length) {
-      details.push(`Weak topics: ${data.weak_topics.join(", ")}`);
+      details.push(`${data.profile.available_time} min / day`);
     }
     if (typeof data.mastery?.overall_score === "number") {
-      details.push(`Mastery: ${Math.round(data.mastery.overall_score * 100)}%`);
+      details.push(`${Math.round(data.mastery.overall_score * 100)}% mastery`);
     }
     if (data.roadmap_summary?.phase_count) {
-      details.push(`Roadmap: ${data.roadmap_summary.mode} mode`);
+      details.push(`${data.roadmap_summary.completed_sessions}/${data.roadmap_summary.total_sessions} sessions complete`);
     }
-    details.push(data.recommended_next_action || "Take a diagnostic and generate your first roadmap.");
+    details.push(data.recommended_next_action || "Ask one focused question.");
     stateSummary.textContent = details.join(" • ");
     refreshOverview();
   } catch (error) {
     latestLearnerState = null;
-    stateTitle.textContent = "Learner state unavailable";
-    stateSummary.textContent = error.message;
+    stateTitle.textContent = "Your learning focus";
+    stateSummary.textContent = "You can still ask the tutor a focused question.";
     refreshOverview();
   }
 }
@@ -500,20 +745,22 @@ function renderMasteryBoard(mastery) {
 
   const sessions = getPreviousSessions();
   const controls = `
-    <div class="inline-actions">
+    <div class="history-controls">
       <button class="ghost-button history-toggle" type="button" data-history-toggle="true">
-        Previous sessions
+        ${previousSessionsExpanded ? "Hide session history" : "Show session history"}
       </button>
-      <button class="ghost-button" type="button" data-history-delete-all="true"${sessions.length ? "" : " disabled"}>
-        Delete all
-      </button>
+      ${previousSessionsExpanded ? `
+        <button class="ghost-button subtle-action" type="button" data-history-delete-all="true"${sessions.length ? "" : " disabled"}>
+          Delete all
+        </button>
+      ` : ""}
     </div>
   `;
 
   if (!sessions.length) {
     masteryTopics.innerHTML = `
-      ${controls}
-      <p class="mastery-empty">No previous sessions yet.</p>
+    ${controls}
+      <p class="mastery-empty">No saved sessions yet.</p>
     `;
     return;
   }
@@ -525,31 +772,7 @@ function renderMasteryBoard(mastery) {
 
   masteryTopics.innerHTML = `
     ${controls}
-    ${previousSessionsExpanded ? `
-      <div class="history-list">
-        ${sessions
-          .map((item) => `
-            <article class="history-item${selectedHistoryItem?.key === item.key ? " is-selected" : ""}">
-              <button
-                class="history-item-main"
-                type="button"
-                data-history-item="${escapeHtml(item.key)}"
-              >
-                <strong>${escapeHtml(item.topic)}</strong>
-                <span>${escapeHtml(formatRelativeDays(item.created_at))}</span>
-              </button>
-              <button
-                class="mini-button"
-                type="button"
-                data-history-delete="${escapeHtml(item.key)}"
-              >
-                Delete
-              </button>
-            </article>
-          `)
-          .join("")}
-      </div>
-    ` : ""}
+    ${previousSessionsExpanded ? `<p class="mastery-empty">Use History in the tutor panel to reopen or delete saved sessions.</p>` : ""}
   `;
 }
 
@@ -652,40 +875,7 @@ masteryTopics.addEventListener("click", async (event) => {
     return;
   }
 
-  const deleteAllButton = event.target.closest("[data-history-delete-all]");
-  if (deleteAllButton) {
-    try {
-      await deleteAllHistoryItems();
-    } catch (error) {
-      roadmapStatus.textContent = error.message;
-    }
-    return;
-  }
-
-  const deleteButton = event.target.closest("[data-history-delete]");
-  if (deleteButton) {
-    try {
-      await deleteHistoryItem(deleteButton.dataset.historyDelete || "");
-    } catch (error) {
-      roadmapStatus.textContent = error.message;
-    }
-    return;
-  }
-
-  const historyButton = event.target.closest("[data-history-item]");
-  if (!historyButton) {
-    return;
-  }
-
-  selectedHistoryItemKey = historyButton.dataset.historyItem || "";
-  const historyItem = findHistoryItemByKey(selectedHistoryItemKey);
-  const matchingRoadmapSession = findRoadmapSessionByTopic(activeRoadmap, historyItem?.topic || "");
-  selectedRoadmapSessionKey = matchingRoadmapSession?.key || selectedRoadmapSessionKey;
-
   renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
-  renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
-  roadmapStatus.textContent = "Previous session loaded below.";
-  roadmapSessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
 function buildRoadmapSessionKey(phaseId, sessionId) {
@@ -773,7 +963,7 @@ function openRoadmapSession(session) {
   const prompt = buildStudyPrompt(session);
   setActiveView("tutor");
   promptInput.value = prompt;
-  roadmapStatus.textContent = `Opened ${session.title} in Tutor.`;
+  roadmapStatus.textContent = `Loaded ${session.title} into Tutor.`;
   promptInput.focus();
   promptInput.setSelectionRange(prompt.length, prompt.length);
   promptInput.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -799,7 +989,7 @@ function previewRoadmapSessionByKey(sessionKey, options = {}) {
 }
 
 async function updateRoadmapSessionStatus(button) {
-  roadmapStatus.textContent = `Marking session ${button.dataset.status}...`;
+  roadmapStatus.textContent = button.dataset.status === "completed" ? "Saving completion..." : "Saving miss...";
   try {
     const response = await fetch("/api/roadmap/session/update", {
       method: "POST",
@@ -822,8 +1012,8 @@ async function updateRoadmapSessionStatus(button) {
     renderRoadmap(data);
     roadmapStatus.textContent =
       button.dataset.status === "completed"
-        ? "Session marked complete. The roadmap was updated."
-        : "Session marked missed. The roadmap was updated.";
+        ? "Session marked complete."
+        : "Session marked missed.";
     roadmapStatus.scrollIntoView({ behavior: "smooth", block: "nearest" });
     await refreshLearnerState();
     await refreshMasteryBoard();
@@ -835,7 +1025,7 @@ async function updateRoadmapSessionStatus(button) {
 
 function renderRoadmapSessionDetail(session) {
   if (!session) {
-    roadmapSessionDetail.innerHTML = "Select a session to see what to study next.";
+    roadmapSessionDetail.innerHTML = "Choose a session to preview it here.";
     return;
   }
 
@@ -866,8 +1056,8 @@ function renderRoadmapSessionDetail(session) {
       <span class="status-pill">${escapeHtml(session.status || "planned")}</span>
     </div>
     <div class="roadmap-detail-steps">
-      <strong>What to do</strong>
-      <p>Open Tutor, learn this topic, do one short exercise, then come back here and mark the session complete.</p>
+      <strong>How to use this</strong>
+      <p>Open Tutor, learn this topic, do one short exercise, then come back and mark it complete.</p>
     </div>
     <div class="inline-actions">
       <button
@@ -895,10 +1085,29 @@ function renderRoadmap(roadmapResult) {
 
   if (!roadmap || !summary) {
     roadmapMode.textContent = "No roadmap yet";
-    roadmapSummary.textContent = "Roadmap will appear here.";
+    roadmapSummary.textContent = "Your next session will appear here.";
+    if (viewRoadmapButton) {
+      viewRoadmapButton.disabled = true;
+    }
+    if (deleteRoadmapButton) {
+      deleteRoadmapButton.disabled = true;
+    }
+    if (rebuildRoadmapButton) {
+      rebuildRoadmapButton.disabled = true;
+    }
     renderRoadmapSessionDetail(getActiveSessionDetail());
     roadmapBoard.innerHTML = `<p class="mastery-empty">No roadmap yet.</p>`;
     return;
+  }
+
+  if (viewRoadmapButton) {
+    viewRoadmapButton.disabled = false;
+  }
+  if (deleteRoadmapButton) {
+    deleteRoadmapButton.disabled = false;
+  }
+  if (rebuildRoadmapButton) {
+    rebuildRoadmapButton.disabled = false;
   }
 
   const nextRoadmapSession = findNextRoadmapSession(roadmap);
@@ -908,16 +1117,16 @@ function renderRoadmap(roadmapResult) {
     || findFirstRoadmapSession(roadmap);
 
   selectedRoadmapSessionKey = selectedSession?.key || "";
-  roadmapMode.textContent = `${summary.mode} mode`;
+  roadmapMode.textContent = `${summary.mode} roadmap`;
   const progressText =
-    `${summary.completed_sessions}/${summary.total_sessions} sessions completed • ` +
+    `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
     `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
   if (nextRoadmapSession) {
     roadmapSummary.innerHTML = `
       <div class="roadmap-next-action">
         <div>
           <strong>Next up</strong>
-          <p>${escapeHtml(nextRoadmapSession.title)} • Open the brief, then continue in Tutor.</p>
+          <p>${escapeHtml(nextRoadmapSession.title)} • Preview it, then continue in Tutor.</p>
         </div>
         <button
           class="ghost-button roadmap-open-button"
@@ -930,7 +1139,7 @@ function renderRoadmap(roadmapResult) {
           data-phase-title="${escapeHtml(nextRoadmapSession.phaseTitle || "")}"
           data-phase-goal="${escapeHtml(nextRoadmapSession.phaseGoal || "")}"
         >
-          Open brief
+          Preview
         </button>
       </div>
       <p class="roadmap-progress-copy">${escapeHtml(progressText)}</p>
@@ -955,7 +1164,7 @@ function renderRoadmap(roadmapResult) {
               <div>
                 <strong>${session.title}</strong>
                 <p>${session.focus} • ${session.duration_minutes} min • due ${session.due_date}</p>
-                <p>Status: ${session.status}</p>
+                <p>${session.status}</p>
               </div>
               <div class="roadmap-session-actions">
                 <button
@@ -964,10 +1173,10 @@ function renderRoadmap(roadmapResult) {
                   data-preview-session="true"
                   data-session-key="${escapeHtml(buildRoadmapSessionKey(phase.phase_id, session.session_id))}"
                 >
-                  View brief
+                  Preview
                 </button>
-                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="completed">Mark completed</button>
-                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="missed">Mark missed</button>
+                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="completed">Complete</button>
+                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="missed">Missed</button>
               </div>
             </article>
           `
@@ -982,7 +1191,7 @@ function renderRoadmap(roadmapResult) {
               <h5>${phase.goal}</h5>
             </div>
             <div class="roadmap-kicker">
-              checkpoint: ${phase.checkpoint_type}<br />
+              ${phase.checkpoint_type}<br />
               due ${phase.checkpoint_due_date}
             </div>
           </div>
@@ -1049,6 +1258,7 @@ function renderMaterials(materials = []) {
   latestMaterials = materials;
   if (!materials.length) {
     materialsLibrary.innerHTML = `<p class="mastery-empty">Nothing uploaded yet.</p>`;
+    updateMaterialsLibrarySummary();
     updateMaterialsSelectionSummary();
     refreshOverview();
     return;
@@ -1061,23 +1271,31 @@ function renderMaterials(materials = []) {
   const previousMaterials = materials.slice(1);
   const renderMaterialCard = (material) => {
       const checked = selectedMaterialIds.has(material.material_id) ? "checked" : "";
-      const meta = material.kind === "image"
+      const selectedClass = checked ? " is-selected" : "";
+      const kindMeta = material.kind === "image"
         ? `${material.metadata?.width || "?"}x${material.metadata?.height || "?"}`
         : material.kind;
+      const sizeLabel = formatFileSize(material.metadata?.size_bytes);
+      const meta = [kindMeta, sizeLabel, `added ${formatMaterialTimeLabel(material.created_at)}`]
+        .filter(Boolean)
+        .join(" • ");
       return `
-        <article class="material-card">
+        <article class="material-card${selectedClass}">
           <header>
             <div>
               <p class="section-label">${material.kind}</p>
               <h5>${material.name}</h5>
             </div>
             <div class="material-card-actions">
-              <input class="material-select" type="checkbox" data-material-id="${material.material_id}" ${checked} />
+              <label class="material-select-label">
+                <input class="material-select" type="checkbox" data-material-id="${material.material_id}" ${checked} />
+                Use
+              </label>
               <button class="mini-button" type="button" data-delete-material="${material.material_id}">Delete</button>
             </div>
           </header>
           <p>${material.summary}</p>
-          <p>${meta} • added ${formatMaterialTimeLabel(material.created_at)}</p>
+          <p class="material-card-meta">${meta}</p>
         </article>
       `;
     };
@@ -1094,7 +1312,7 @@ function renderMaterials(materials = []) {
     ${previousMaterials.length ? `
       <section class="materials-group">
         <button class="ghost-button" type="button" data-toggle-previous-resources="true">
-          Previous resources
+          ${previousResourcesExpanded ? "Hide" : "Show"} previous resources (${previousMaterials.length})
         </button>
         ${previousResourcesExpanded ? `
           <div class="materials-history">
@@ -1104,6 +1322,7 @@ function renderMaterials(materials = []) {
       </section>
     ` : ""}
   `;
+  updateMaterialsLibrarySummary();
   updateMaterialsSelectionSummary();
   refreshOverview();
 }
@@ -1206,51 +1425,171 @@ async function refreshMaterials() {
 }
 
 function renderEvaluationSnapshot(snapshot) {
+  const renderEmptyInsights = () => {
+    evaluationBoard.innerHTML = `
+      <div class="insights-grid">
+        <article class="insight-card insight-card-primary">
+          <div class="insight-card-head">
+            <div>
+              <p class="section-label">Snapshot</p>
+              <h4>No learning signal yet</h4>
+              <p>ArkAI needs one learning action before it can summarize your progress.</p>
+            </div>
+            <strong class="insight-score">0%</strong>
+          </div>
+          <div class="insight-meter" aria-hidden="true"><span style="width: 0%"></span></div>
+          <div class="insight-status-grid">
+            <div class="insight-status-item"><strong>None</strong><span>Diagnostics</span><p>Take a quick check</p></div>
+            <div class="insight-status-item"><strong>Missing</strong><span>Roadmap</span><p>Create next steps</p></div>
+            <div class="insight-status-item"><strong>Missing</strong><span>Materials</span><p>Upload notes when useful</p></div>
+            <div class="insight-status-item"><strong>None</strong><span>Activity</span><p>Finish one tutor session</p></div>
+          </div>
+        </article>
+        <article class="insight-card">
+          <p class="section-label">Next focus</p>
+          <h4>Start here</h4>
+          <p class="state-summary insights-compact-copy">Do one small action so Insights becomes useful.</p>
+          <div class="next-focus-list">
+            <div class="next-focus-item"><span>1</span><p>Ask the tutor one focused question.</p></div>
+            <div class="next-focus-item"><span>2</span><p>Take a quick diagnostic when ready.</p></div>
+            <div class="next-focus-item"><span>3</span><p>Create a roadmap after the check.</p></div>
+          </div>
+        </article>
+      </div>
+    `;
+  };
+
   if (!snapshot) {
-    evaluationBoard.innerHTML = `<p class="mastery-empty">No evaluation yet.</p>`;
+    renderEmptyInsights();
     return;
   }
+  const assessmentCount = snapshot.coverage?.assessment_count || 0;
+  const progressEvents = snapshot.coverage?.progress_events || 0;
+  const roadmapPresent = Boolean(snapshot.coverage?.roadmap_present);
+  const groundingAvailable = Boolean(snapshot.coverage?.grounding_available);
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+  const nextSteps = [];
+
+  if (!assessmentCount) {
+    nextSteps.push("Take a short diagnostic.");
+  }
+  if (!roadmapPresent) {
+    nextSteps.push("Generate your roadmap.");
+  }
+  if (!groundingAvailable) {
+    nextSteps.push("Upload study materials.");
+  }
+  if (!progressEvents) {
+    nextSteps.push("Finish one study session.");
+  }
+
+  const priorityItems = warnings.length ? warnings : nextSteps;
+  if (!assessmentCount && !progressEvents && !roadmapPresent && !groundingAvailable) {
+    renderEmptyInsights();
+    return;
+  }
+  const readinessScore = [assessmentCount > 0, roadmapPresent, groundingAvailable, progressEvents > 0]
+    .filter(Boolean).length;
+  const readinessPercent = Math.round((readinessScore / 4) * 100);
+  const snapshotItems = [
+    {
+      label: "Diagnostics",
+      value: assessmentCount ? `${assessmentCount}` : "None",
+      detail: assessmentCount ? "Learning level measured" : "Take a quick check",
+    },
+    {
+      label: "Roadmap",
+      value: roadmapPresent ? "Ready" : "Missing",
+      detail: roadmapPresent ? "Study path is available" : "Create next steps",
+    },
+    {
+      label: "Materials",
+      value: groundingAvailable ? "Ready" : "Missing",
+      detail: groundingAvailable ? "Tutor can use your notes" : "Upload notes when useful",
+    },
+    {
+      label: "Activity",
+      value: progressEvents ? `${progressEvents}` : "None",
+      detail: progressEvents ? "Study updates recorded" : "Finish one session",
+    },
+  ];
+
   evaluationBoard.innerHTML = `
-    <article class="material-card">
-      <header>
-        <div>
-          <p class="section-label">Coverage</p>
-          <h5>System evaluation</h5>
+    <div class="insights-grid">
+      <article class="insight-card insight-card-primary">
+        <div class="insight-card-head">
+          <div>
+            <p class="section-label">Snapshot</p>
+            <h4>Your learning signal</h4>
+            <p>How much ArkAI knows about your current progress.</p>
+          </div>
+          <strong class="insight-score">${readinessPercent}%</strong>
         </div>
-      </header>
-      <p>Assessments: ${snapshot.coverage?.assessment_count || 0}</p>
-      <p>Progress events: ${snapshot.coverage?.progress_events || 0}</p>
-      <p>Roadmap present: ${snapshot.coverage?.roadmap_present ? "yes" : "no"}</p>
-      <p>Grounding available: ${snapshot.coverage?.grounding_available ? "yes" : "no"}</p>
-      <p>Warnings: ${(snapshot.warnings || []).join(", ") || "none"}</p>
-    </article>
+        <div class="insight-meter" aria-hidden="true">
+          <span style="width: ${readinessPercent}%"></span>
+        </div>
+        <div class="insight-status-grid">
+          ${snapshotItems.map((item) => `
+            <div class="insight-status-item">
+              <strong>${escapeHtml(item.value)}</strong>
+              <span>${escapeHtml(item.label)}</span>
+              <p>${escapeHtml(item.detail)}</p>
+            </div>
+          `).join("")}
+        </div>
+      </article>
+      <article class="insight-card">
+        <p class="section-label">Next focus</p>
+        <h4>${priorityItems.length ? "Do this next" : "Keep going"}</h4>
+        <p class="state-summary insights-compact-copy">${priorityItems.length ? "Highest-impact actions right now." : "Enough signal. Continue your next session."}</p>
+        ${priorityItems.length
+          ? `<div class="next-focus-list">${priorityItems.slice(0, 3).map((item, index) => `
+              <div class="next-focus-item">
+                <span>${index + 1}</span>
+                <p>${escapeHtml(item)}</p>
+              </div>
+            `).join("")}</div>`
+          : `<div class="next-focus-list"><div class="next-focus-item"><span>1</span><p>Open your next Tutor session.</p></div></div>`}
+      </article>
+    </div>
   `;
 }
 
 function renderInterventionPlan(plan) {
   latestInterventionPlan = plan;
   if (!plan) {
-    interventionRisk.textContent = "Unknown";
-    interventionSummary.textContent = "Refresh to load insights.";
+    interventionRisk.textContent = "Waiting for insights";
+    interventionSummary.textContent = "Refresh to see your current progress and the next best step.";
     refreshOverview();
     return;
   }
-  interventionRisk.textContent = `${plan.risk_level} risk`;
-  interventionSummary.textContent = `${plan.summary} Recommended: ${(plan.recommended_actions || []).slice(0, 2).join(" ")}`;
+  const riskLabelMap = {
+    high: "Needs support",
+    medium: "Watch closely",
+    low: "On track",
+  };
+  const riskLabel = riskLabelMap[plan.risk_level] || "Check-in needed";
+  const completedSessions = Number(plan.completed_sessions || 0);
+  const masteryPercent = Number.isFinite(plan.overall_mastery)
+    ? Math.round(Number(plan.overall_mastery) * 100)
+    : 0;
+  const recommended = (plan.recommended_actions || [])[0] || "";
+  interventionRisk.textContent = riskLabel;
+  interventionSummary.textContent = `Mastery ${masteryPercent}% • ${completedSessions} session${completedSessions === 1 ? "" : "s"} done${recommended ? ` • Next: ${recommended}` : ""}`;
   refreshOverview();
 }
 
 function renderWeeklyReport(report) {
   latestWeeklyReport = report || null;
   if (!report) {
-    reportBoard.innerHTML = `<p class="mastery-empty">No report yet.</p>`;
+    reportBoard.innerHTML = `<p class="mastery-empty">No weekly report yet. Generate one when you want a shareable summary.</p>`;
     return;
   }
   reportBoard.innerHTML = `
     <article class="material-card">
       <header>
         <div>
-          <p class="section-label">Weekly report</p>
+          <p class="section-label">Report</p>
           <h5>${escapeHtml(report.title)}</h5>
         </div>
       </header>
@@ -1280,6 +1619,7 @@ async function refreshInsights() {
   if (!username) {
     renderInterventionPlan(null);
     renderEvaluationSnapshot(null);
+    renderWeeklyReport(null);
     return;
   }
 
@@ -1305,231 +1645,21 @@ function refreshOverview() {
   const masteryScoreValue = typeof latestLearnerState?.mastery?.overall_score === "number"
     ? Math.round(latestLearnerState.mastery.overall_score * 100)
     : 0;
-  overviewMastery.textContent = `${masteryScoreValue}%`;
-  overviewMasteryCaption.textContent = latestLearnerState?.mastery?.overall_label
-    ? `Current level: ${latestLearnerState.mastery.overall_label}`
-    : "Waiting for first assessment.";
-
   const roadmapSummary = latestLearnerState?.roadmap_summary;
+  const progressBits = [];
+  if (masteryScoreValue > 0) {
+    progressBits.push(`Mastery ${masteryScoreValue}%`);
+  }
   if (roadmapSummary?.phase_count) {
-    overviewRoadmap.textContent = `${roadmapSummary.mode}`;
-    overviewRoadmapCaption.textContent = `${roadmapSummary.completed_sessions}/${roadmapSummary.total_sessions} sessions complete`;
-  } else {
-    overviewRoadmap.textContent = "No plan";
-    overviewRoadmapCaption.textContent = "Generate a roadmap to activate pacing.";
+    progressBits.push(`${roadmapSummary.completed_sessions}/${roadmapSummary.total_sessions} roadmap sessions complete`);
+  }
+  if (latestMaterials.length) {
+    progressBits.push(`${latestMaterials.length} study materials ready`);
   }
 
-  overviewMaterials.textContent = `${latestMaterials.length}`;
-  overviewMaterialsCaption.textContent = latestMaterials.length
-    ? `${selectedMaterialIds.size} selected for grounding`
-    : "No materials yet.";
-
-  overviewRisk.textContent = latestInterventionPlan?.risk_level || "Unknown";
-  overviewRiskCaption.textContent = latestInterventionPlan?.triggers?.length
-    ? latestInterventionPlan.triggers.join(" • ")
-    : "No insight yet.";
-
-  overviewBlurb.textContent = latestLearnerState?.recommended_next_action
-    || "Learn, plan, and review in one place.";
-}
-
-function renderSystemStatus(status) {
-  if (!status) {
-    systemStackTitle.textContent = "Unavailable";
-    systemStackSummary.textContent = "Could not load status.";
-    systemReadinessBoard.innerHTML = `<p class="mastery-empty">No system status yet.</p>`;
-    return;
+  if (sidebarProgressSummary) {
+    sidebarProgressSummary.textContent = progressBits.join(" • ") || "No saved progress yet.";
   }
-
-  systemStackTitle.textContent = `${status.stack?.agent_runtime || "Runtime"} + ${status.stack?.model_routing || "Models"}`;
-  systemStackSummary.textContent =
-    `Database mode: ${status.stack?.database_mode || "unknown"} • ` +
-    `Frontend: ${status.stack?.frontend || "unknown"}`;
-
-  const readinessRows = Object.entries(status.readiness || {})
-    .map(([key, value]) => `<p><strong>${key.replace(/_/g, " ")}:</strong> ${value ? "ready" : "not ready"}</p>`)
-    .join("");
-  const metricRows = Object.entries(status.metrics || {})
-    .map(([key, value]) => `<p><strong>${key.replace(/_/g, " ")}:</strong> ${value}</p>`)
-    .join("");
-  const nextSteps = (status.recommended_next_steps || []).map((item) => `<p>- ${item}</p>`).join("");
-
-  systemReadinessBoard.innerHTML = `
-    <article class="material-card">
-      <header>
-        <div>
-          <p class="section-label">Readiness</p>
-          <h5>Google-native setup</h5>
-        </div>
-      </header>
-      ${readinessRows}
-    </article>
-    <article class="material-card">
-      <header>
-        <div>
-          <p class="section-label">Observability</p>
-          <h5>App metrics</h5>
-        </div>
-      </header>
-      ${metricRows}
-    </article>
-    <article class="material-card">
-      <header>
-        <div>
-          <p class="section-label">Next steps</p>
-          <h5>Architecture checklist</h5>
-        </div>
-      </header>
-      ${nextSteps}
-    </article>
-  `;
-}
-
-async function refreshSystemStatus() {
-  try {
-    const response = await fetch("/api/system-status");
-    const data = await response.json();
-    if (!response.ok || data.status !== "success") {
-      throw new Error(data.error || "Could not load system status.");
-    }
-    renderSystemStatus(data);
-  } catch (error) {
-    renderSystemStatus(null);
-    systemStackSummary.textContent = error.message;
-  }
-}
-
-function renderDemoKit(demoKit) {
-  if (!demoKit) {
-    demoPitchCopy.textContent = "Demo unavailable.";
-    demoMetricsBoard.innerHTML = `<p class="mastery-empty">No demo metrics yet.</p>`;
-    demoPersonasBoard.innerHTML = `<p class="mastery-empty">No demo personas yet.</p>`;
-    demoScriptBoard.innerHTML = `<p class="mastery-empty">No demo script yet.</p>`;
-    return;
-  }
-
-  demoPitchTitle.textContent = "Judge pitch";
-  demoPitchCopy.textContent = `${demoKit.pitch?.one_liner || ""} ${demoKit.pitch?.judge_angle || ""}`.trim();
-
-  demoMetricsBoard.innerHTML = (demoKit.metrics || [])
-    .map(
-      (metric) => `
-        <article class="material-card">
-          <header>
-            <div>
-              <p class="section-label">Metric</p>
-              <h5>${metric.label}</h5>
-            </div>
-          </header>
-          <p><strong>${metric.value}</strong></p>
-          <p>${metric.detail}</p>
-        </article>
-      `
-    )
-    .join("") || `<p class="mastery-empty">No demo metrics yet.</p>`;
-
-  demoPersonasBoard.innerHTML = (demoKit.personas || [])
-    .map(
-      (persona) => `
-        <article class="material-card">
-          <header>
-            <div>
-              <p class="section-label">Persona</p>
-              <h5>${persona.title}</h5>
-            </div>
-            <button class="mini-button" type="button" data-demo-persona="${persona.id}">Load</button>
-          </header>
-          <p>${persona.profile}</p>
-          <p>Topic: ${persona.topic} • ${persona.daily_minutes} min/day • ${persona.deadline_days} day(s)</p>
-          <p>${persona.demo_prompt}</p>
-        </article>
-      `
-    )
-    .join("") || `<p class="mastery-empty">No demo personas yet.</p>`;
-
-  demoScriptBoard.innerHTML = (demoKit.demo_script || [])
-    .map(
-      (step) => `
-        <article class="material-card">
-          <header>
-            <div>
-              <p class="section-label">Step ${step.step}</p>
-              <h5>${step.title}</h5>
-            </div>
-          </header>
-          <p>${step.detail}</p>
-        </article>
-      `
-    )
-    .join("") || `<p class="mastery-empty">No demo script yet.</p>`;
-}
-
-async function refreshDemoKit() {
-  const username = getUsername() || "frontend-user";
-  try {
-    const response = await fetch(`/api/demo-kit?userId=${encodeURIComponent(username)}`, {
-      headers: buildAuthHeaders(),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status !== "success") {
-      throw new Error(data.error || "Could not load demo kit.");
-    }
-    renderDemoKit(data);
-  } catch (error) {
-    renderDemoKit(null);
-    demoPitchCopy.textContent = error.message;
-  }
-}
-
-function applyDemoPersona(personaId) {
-  const personaCards = Array.from(demoPersonasBoard.querySelectorAll("[data-demo-persona]"));
-  const card = personaCards.find((button) => button.dataset.demoPersona === personaId);
-  if (!card) {
-    return;
-  }
-  const personaArticle = card.closest(".material-card");
-  const title = personaArticle?.querySelector("h5")?.textContent || "";
-  const personaMap = {
-    beginner_student: {
-      topic: "Python loops",
-      goal: "Understand for and while loops well enough to solve basic exercises.",
-      dailyMinutes: "45",
-      deadlineDays: "14",
-      prompt: "Teach me Python loops simply, then create a study roadmap.",
-      level: "beginner",
-    },
-    exam_crammer: {
-      topic: "Recursion",
-      goal: "Recover fast and focus only on high-impact recursion concepts before the exam.",
-      dailyMinutes: "30",
-      deadlineDays: "7",
-      prompt: "I missed several sessions. Give me a catch-up plan for recursion this week.",
-      level: "beginner",
-    },
-    working_professional: {
-      topic: "Binary search",
-      goal: "Learn one interview algorithm deeply using notes and short evening sessions.",
-      dailyMinutes: "25",
-      deadlineDays: "10",
-      prompt: "Use my uploaded notes to teach binary search and make a short roadmap.",
-      level: "intermediate",
-    },
-  };
-  const persona = personaMap[personaId];
-  if (!persona) {
-    return;
-  }
-
-  diagnosticTopicInput.value = persona.topic;
-  diagnosticGoalInput.value = persona.goal;
-  diagnosticTimeInput.value = persona.dailyMinutes;
-  diagnosticLevelSelect.value = persona.level;
-  roadmapTopicInput.value = persona.topic;
-  roadmapGoalInput.value = persona.goal;
-  roadmapTimeInput.value = persona.dailyMinutes;
-  roadmapDeadlineInput.value = persona.deadlineDays;
-  promptInput.value = persona.prompt;
-  overviewBlurb.textContent = `Loaded demo persona: ${title}.`;
 }
 
 function speakText(text) {
@@ -1544,9 +1674,12 @@ function speakText(text) {
 }
 
 function setupVoiceRecognition() {
+  if (!voiceInputButton) {
+    return;
+  }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
-    voiceStatus.textContent = "Browser speech recognition is not supported here.";
+    setVoiceStatus("Browser speech recognition is not supported here.");
     voiceInputButton.disabled = true;
     return;
   }
@@ -1559,14 +1692,14 @@ function setupVoiceRecognition() {
   speechRecognition.onstart = () => {
     isListening = true;
     voiceInputButton.textContent = "Listening...";
-    voiceStatus.textContent = "Voice input is listening. Speak your study request.";
+    setVoiceStatus("Voice input is listening. Speak your study request.");
   };
 
   speechRecognition.onend = () => {
     isListening = false;
     voiceInputButton.textContent = "Start voice input";
     if (voiceStatus.textContent.startsWith("Voice input is listening")) {
-      voiceStatus.textContent = "Voice mode idle.";
+      setVoiceStatus("");
     }
   };
 
@@ -1577,12 +1710,12 @@ function setupVoiceRecognition() {
     }
     promptInput.value = transcript.trim();
     pendingInputMode = "voice";
-    voiceStatus.textContent = "Voice transcript captured. Edit if needed, then send.";
+    setVoiceStatus("Voice transcript captured. Edit if needed, then send.");
     promptInput.focus();
   };
 
   speechRecognition.onerror = (event) => {
-    voiceStatus.textContent = `Voice input error: ${event.error}`;
+    setVoiceStatus(`Voice input error: ${event.error}`);
   };
 }
 
@@ -1654,26 +1787,58 @@ function renderAssessmentResult(result) {
   diagnosticResult.classList.remove("hidden");
 }
 
-downloadAssessmentPdfButton.addEventListener("click", () => {
+saveAssessmentGoogleDocButton.addEventListener("click", async () => {
   if (!activeAssessment?.assessment_id) {
     assessmentStatus.textContent = "Create a mock test first.";
     return;
   }
+  
+  const currentUsername = getUsername();
+  if (!currentUsername) {
+      showErrorToast("Please log in to save documents.");
+      return;
+  }
 
-  const blob = buildAssessmentPdfBlob(activeAssessment);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const topicSlug = String(activeAssessment.topic || "mock-test")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "mock-test";
-  link.href = url;
-  link.download = `${topicSlug}-mock-test.pdf`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  assessmentStatus.textContent = "Mock test PDF downloaded.";
+  saveAssessmentGoogleDocButton.setAttribute("disabled", "disabled");
+  const oldText = saveAssessmentGoogleDocButton.textContent;
+  saveAssessmentGoogleDocButton.textContent = "Saving...";
+
+  try {
+    const response = await fetch("/api/assessment/save-google-doc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: currentUsername,
+        idToken: getIdToken(),
+        assessmentId: activeAssessment.assessment_id,
+        title: activeAssessment.topic || "Mock Test",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || "Could not save document.");
+    }
+    
+    if (data.status === "auth_required") {
+        saveAssessmentGoogleDocButton.removeAttribute("disabled");
+        saveAssessmentGoogleDocButton.textContent = oldText;
+        showErrorToast(`Google Auth required. Please log in.`);
+        return;
+    }
+    
+    assessmentStatus.textContent = "Mock test saved to Google Docs!";
+    setTimeout(() => {
+        assessmentStatus.textContent = "";
+    }, 5000);
+  } catch (err) {
+    showErrorToast(err.message);
+  } finally {
+    saveAssessmentGoogleDocButton.removeAttribute("disabled");
+    saveAssessmentGoogleDocButton.textContent = oldText;
+  }
 });
 
 function ensureIdentity() {
@@ -1682,7 +1847,6 @@ function ensureIdentity() {
     closeUsernameModal();
     return username;
   }
-  openUsernameModal(false);
   return "";
 }
 
@@ -1756,7 +1920,7 @@ function appendMessage(role, body, skipSave = false) {
 
   const roleLabel = document.createElement("p");
   roleLabel.className = "message-role";
-  roleLabel.textContent = role === "user" ? getUsername() || "You" : "ARKAI";
+  roleLabel.textContent = role === "user" ? activeSession.displayName || getUsername() || "You" : "ARKAI";
 
   article.appendChild(roleLabel);
   article.appendChild(buildMessageBody(body));
@@ -1765,7 +1929,7 @@ function appendMessage(role, body, skipSave = false) {
 
   if (role === "agent") {
     lastAgentReply = body;
-    if (voiceAutospeak.checked) {
+    if (voiceAutospeak?.checked) {
       speakText(body.replace(/[#*_`>-]/g, " "));
     }
   }
@@ -1776,12 +1940,48 @@ function appendMessage(role, body, skipSave = false) {
 }
 
 function buildAuthHeaders() {
-  const headers = {};
-  const idToken = getIdToken();
-  if (idToken) {
-    headers.Authorization = `Bearer ${idToken}`;
+  return {};
+}
+
+async function createServerSession(idToken) {
+  const response = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ idToken }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || "Could not create a secure sign-in session.");
   }
-  return headers;
+  applySession(data);
+  shouldClearServerSessionOnFirebaseSignOut = true;
+  setIdToken("");
+  return data;
+}
+
+async function logoutServerSession() {
+  isLoggingOutServerSession = true;
+  try {
+    const response = await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ resetIdentity: true, resetSession: true }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || "Could not end the secure sign-in session.");
+    }
+    applySession(data);
+    shouldClearServerSessionOnFirebaseSignOut = false;
+    setIdToken("");
+    return data;
+  } finally {
+    isLoggingOutServerSession = false;
+  }
 }
 
 async function bootstrapAuth() {
@@ -1791,11 +1991,11 @@ async function bootstrapAuth() {
     authMode = config.authMode || "email_fallback";
 
     if (!config.firebase) {
-      updateAuthPill("Email fallback", true);
+      updateAuthPill("Guest sessions enabled", true);
       googleSigninButton.disabled = true;
       googleSigninButton.textContent = "Firebase Auth not configured";
       authHelper.textContent =
-        "Add Firebase web config env vars to enable Google Sign-In. The Gmail fallback still works locally.";
+        "Add Firebase web config env vars to enable Google Sign-In. Until then, each browser keeps its own guest session.";
       return;
     }
 
@@ -1806,20 +2006,26 @@ async function bootstrapAuth() {
 
     onAuthStateChanged(firebaseAuthClient, async (user) => {
       if (!user) {
-        setIdToken("");
-        if (!getUsername()) {
-          updateAuthPill("Auth not connected", true);
+        const shouldLogoutServerSession =
+          shouldClearServerSessionOnFirebaseSignOut && !isLoggingOutServerSession;
+        if (shouldLogoutServerSession) {
+          try {
+            await logoutServerSession();
+          } catch (error) {
+            console.error("Could not clear server session after Firebase sign-out.", error);
+          }
         }
+        shouldClearServerSessionOnFirebaseSignOut = false;
+        setIdToken("");
+        updateAuthPill(activeSession.displayName || "Guest session", true);
         return;
       }
 
+      shouldClearServerSessionOnFirebaseSignOut = true;
       const idToken = await user.getIdToken();
-      setIdToken(idToken);
-      if (user.email) {
-        setUsername(user.email);
-        closeUsernameModal();
-        updateAuthPill(user.email, false);
-      }
+      await createServerSession(idToken);
+      closeUsernameModal();
+      updateAuthPill(user.email || activeSession.displayName || "Signed in", false);
       await refreshLearnerState();
       await refreshMasteryBoard();
       await refreshRoadmap();
@@ -1827,11 +2033,7 @@ async function bootstrapAuth() {
       await refreshInsights();
     });
 
-    if (getUsername()) {
-      updateAuthPill(getUsername(), false);
-    } else {
-      updateAuthPill("Google Sign-In ready", true);
-    }
+    updateAuthPill("Google Sign-In ready", true);
   } catch (error) {
     updateAuthPill("Auth setup failed", true);
     authHelper.textContent = `Firebase Auth could not start: ${error.message}`;
@@ -1846,12 +2048,19 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
 
   const topic = roadmapTopicInput.value.trim() || diagnosticTopicInput.value.trim();
   if (!topic) {
-    roadmapStatus.textContent = "Choose a roadmap topic first.";
+    if (roadmapHomeStatus) {
+      roadmapHomeStatus.textContent = "Add a topic first.";
+    }
+    roadmapStatus.textContent = "Add a topic first.";
     roadmapTopicInput.focus();
     return;
   }
 
-  roadmapStatus.textContent = forceRebuild ? "Generating recovery roadmap..." : "Generating roadmap...";
+  if (roadmapHomeStatus) {
+    roadmapHomeStatus.textContent = "Opening roadmap workspace...";
+  }
+  showPlanWorkspace("roadmap");
+  roadmapStatus.textContent = forceRebuild ? "Rebuilding your roadmap..." : "Creating your roadmap...";
   const response = await fetch("/api/roadmap/generate", {
     method: "POST",
     headers: {
@@ -1875,10 +2084,52 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
     throw new Error(data.error || data.message || "Could not generate roadmap.");
   }
     renderRoadmap(data);
-    roadmapStatus.textContent = data.message || "Roadmap generated.";
+    roadmapStatus.textContent = data.message || "Roadmap ready.";
+    if (roadmapHomeStatus) {
+      roadmapHomeStatus.textContent = "Roadmap ready. Use View roadmap anytime.";
+    }
     await refreshLearnerState();
     await refreshInsights();
   }
+
+async function deleteCurrentRoadmap() {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+  if (!activeRoadmap) {
+    roadmapStatus.textContent = "No roadmap to delete.";
+    return;
+  }
+
+  deleteRoadmapButton.disabled = true;
+  roadmapStatus.textContent = "Deleting roadmap...";
+  const response = await fetch("/api/roadmap/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      userId: username,
+      idToken: getIdToken(),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not delete roadmap.");
+  }
+
+  selectedRoadmapSessionKey = "";
+  renderRoadmap(null);
+  showPlanWorkspace("home");
+  roadmapStatus.textContent = data.message || "Roadmap deleted.";
+  if (roadmapHomeStatus) {
+    roadmapHomeStatus.textContent = "Roadmap deleted. Create a new one when ready.";
+  }
+  await refreshLearnerState();
+  await refreshInsights();
+}
 
 async function readFileAsDataUrl(file) {
   return await new Promise((resolve, reject) => {
@@ -1898,39 +2149,11 @@ async function readFileAsText(file) {
   });
 }
 
-seedButton.addEventListener("click", () => {
-  setActiveView("tutor");
-  promptInput.value = "Teach me loops with one example and one exercise.";
-  diagnosticTopicInput.value = "Python loops";
-  diagnosticGoalInput.value = "Build a strong foundation";
-  diagnosticTimeInput.value = "45";
-  roadmapTopicInput.value = "Python loops";
-  roadmapGoalInput.value = "Be comfortable solving basic loop problems";
-  roadmapTimeInput.value = "45";
-  roadmapDeadlineInput.value = "14";
-  materialQueryInput.value = "Summarize the selected materials for me.";
-});
-
 if (newSessionButton) {
-  newSessionButton.addEventListener("click", () => {
-    clearSessionState();
+  newSessionButton.addEventListener("click", async () => {
+    await clearSessionState();
   });
 }
-
-changeGmailButton.addEventListener("click", async () => {
-  if (firebaseAuthClient && firebaseAuthClient.currentUser) {
-    await signOut(firebaseAuthClient);
-  }
-  setIdToken("");
-  window.localStorage.removeItem(usernameStorageKey);
-  updateAuthPill("Auth not connected", true);
-  openUsernameModal(false);
-  await refreshLearnerState();
-  await refreshMasteryBoard();
-  await refreshRoadmap();
-  await refreshMaterials();
-  await refreshInsights();
-});
 
 promptInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey) {
@@ -1941,6 +2164,137 @@ promptInput.addEventListener("keydown", (event) => {
   submitButton.click();
 });
 
+promptInput.addEventListener("input", () => {
+  autoresizePrompt();
+});
+
+messages.addEventListener("click", (event) => {
+  const starterButton = event.target.closest("[data-starter-prompt]");
+  if (!starterButton) {
+    return;
+  }
+  promptInput.value = starterButton.dataset.starterPrompt || "";
+  autoresizePrompt();
+  promptInput.focus();
+  promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+});
+
+if (authPill) {
+  authPill.addEventListener("click", () => {
+    toggleProfileDropdown();
+  });
+}
+
+if (headerChangeAccount) {
+  headerChangeAccount.addEventListener("click", async () => {
+    await openAccountSwitcher();
+  });
+}
+
+if (showHistoryButton) {
+  showHistoryButton.addEventListener("click", () => {
+    openHistoryModal();
+  });
+}
+
+if (closeHistoryButton) {
+  closeHistoryButton.addEventListener("click", () => {
+    closeHistoryModal();
+  });
+}
+
+if (historyModal) {
+  historyModal.addEventListener("click", (event) => {
+    if (event.target === historyModal) {
+      closeHistoryModal();
+    }
+  });
+}
+
+if (historyListModal) {
+  historyListModal.addEventListener("click", async (event) => {
+    const deleteAllButton = event.target.closest("[data-history-modal-delete-all]");
+    if (deleteAllButton) {
+      try {
+        await deleteAllHistoryItems();
+        openHistoryModal();
+      } catch (error) {
+        setVoiceStatus(error.message || "Could not delete saved sessions.");
+      }
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-history-modal-delete]");
+    if (deleteButton) {
+      try {
+        await deleteHistoryItem(deleteButton.dataset.historyModalDelete || "");
+        openHistoryModal();
+      } catch (error) {
+        setVoiceStatus(error.message || "Could not delete saved session.");
+      }
+      return;
+    }
+
+    const openButton = event.target.closest("[data-history-modal-open]");
+    if (!openButton) {
+      return;
+    }
+
+    selectedHistoryItemKey = openButton.dataset.historyModalOpen || "";
+    const historyItem = findHistoryItemByKey(selectedHistoryItemKey);
+    const matchingRoadmapSession = findRoadmapSessionByTopic(activeRoadmap, historyItem?.topic || "");
+    selectedRoadmapSessionKey = matchingRoadmapSession?.key || selectedRoadmapSessionKey;
+    renderMasteryBoard(latestLearnerState?.mastery || { overall_score: 0, topics: [] });
+    renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+    closeHistoryModal();
+    roadmapStatus.textContent = "Saved session loaded below.";
+    roadmapSessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
+if (shareChatButton) {
+  shareChatButton.addEventListener("click", async () => {
+    const transcript = buildShareTranscript();
+    if (!transcript) {
+      setVoiceStatus("No chat history to share yet.");
+      return;
+    }
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "ARKAI session",
+          text: transcript,
+        });
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(transcript);
+      } else {
+        throw new Error("Sharing is not available in this browser.");
+      }
+      setVoiceStatus("Chat transcript ready to share.");
+    } catch (error) {
+      setVoiceStatus(error.message || "Could not share this chat yet.");
+    }
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!profileDropdown || !authPill) {
+    return;
+  }
+  if (profileDropdown.contains(event.target) || authPill.contains(event.target)) {
+    return;
+  }
+  closeProfileDropdown();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeProfileDropdown();
+    closeHistoryModal();
+  }
+});
+
 googleSigninButton.addEventListener("click", async () => {
   if (!firebaseAuthClient || !googleProvider) {
     openUsernameModal(true);
@@ -1948,17 +2302,7 @@ googleSigninButton.addEventListener("click", async () => {
   }
 
   try {
-    const result = await signInWithPopup(firebaseAuthClient, googleProvider);
-    const idToken = await result.user.getIdToken();
-    setIdToken(idToken);
-    setUsername(result.user.email || "");
-    updateAuthPill(result.user.email || "Signed in", false);
-    closeUsernameModal();
-    await refreshLearnerState();
-    await refreshMasteryBoard();
-    await refreshRoadmap();
-    await refreshMaterials();
-    await refreshInsights();
+    await signInWithPopup(firebaseAuthClient, googleProvider);
     promptInput.focus();
   } catch (error) {
     authHelper.textContent = `Google Sign-In failed: ${error.message}`;
@@ -1967,26 +2311,10 @@ googleSigninButton.addEventListener("click", async () => {
 
 usernameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-
-  const username = sanitizeUsername(usernameInput.value);
-  if (!isValidEmail(username)) {
-    usernameInput.focus();
-    usernameInput.setCustomValidity("Enter a valid Gmail address.");
-    usernameInput.reportValidity();
-    return;
-  }
-
-  if (!username.endsWith("@gmail.com")) {
-    usernameInput.focus();
-    usernameInput.setCustomValidity("Use a Gmail address ending in @gmail.com.");
-    usernameInput.reportValidity();
-    return;
-  }
-
   usernameInput.setCustomValidity("");
-  setUsername(username);
+  await refreshSession({ resetIdentity: true, resetSession: true });
   setIdToken("");
-  updateAuthPill(`${username} (fallback)`, true);
+  updateAuthPill(activeSession.displayName || "Guest session", true);
   closeUsernameModal();
   promptInput.focus();
   await refreshLearnerState();
@@ -2014,6 +2342,37 @@ rebuildRoadmapButton.addEventListener("click", async () => {
   }
 });
 
+if (viewRoadmapButton) {
+  viewRoadmapButton.addEventListener("click", () => {
+    setActiveView("plan");
+    showPlanWorkspace("roadmap");
+  });
+}
+
+if (deleteRoadmapButton) {
+  deleteRoadmapButton.addEventListener("click", async () => {
+    const confirmed = window.confirm("Delete your current roadmap? This removes the saved plan for this account.");
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await deleteCurrentRoadmap();
+    } catch (error) {
+      roadmapStatus.textContent = error.message;
+    } finally {
+      if (deleteRoadmapButton && activeRoadmap) {
+        deleteRoadmapButton.disabled = false;
+      }
+    }
+  });
+}
+
+document.querySelectorAll("[data-plan-back]").forEach((button) => {
+  button.addEventListener("click", () => {
+    showPlanWorkspace("home");
+  });
+});
+
 refreshInsightsButton.addEventListener("click", async () => {
   setActiveView("insights");
   await refreshInsights();
@@ -2021,6 +2380,7 @@ refreshInsightsButton.addEventListener("click", async () => {
 
 generateReportButton.addEventListener("click", async () => {
   setActiveView("insights");
+  showInsightsWorkspace("report");
   const username = ensureIdentity();
   if (!username) {
     return;
@@ -2046,6 +2406,12 @@ generateReportButton.addEventListener("click", async () => {
   } catch (error) {
     reportBoard.innerHTML = `<p class="mastery-empty">${error.message}</p>`;
   }
+});
+
+document.querySelectorAll("[data-insights-back]").forEach((button) => {
+  button.addEventListener("click", () => {
+    showInsightsWorkspace("home");
+  });
 });
 
 reportBoard.addEventListener("click", async (event) => {
@@ -2111,14 +2477,6 @@ reportBoard.addEventListener("click", async (event) => {
   }
 });
 
-refreshSystemButton.addEventListener("click", async () => {
-  await refreshSystemStatus();
-});
-
-refreshDemoKitButton.addEventListener("click", async () => {
-  await refreshDemoKit();
-});
-
 uploadMaterialButton.addEventListener("click", async () => {
   setActiveView("materials");
   const username = ensureIdentity();
@@ -2128,8 +2486,20 @@ uploadMaterialButton.addEventListener("click", async () => {
 
   const file = materialFileInput.files?.[0] || null;
   const pastedText = materialTextInput.value.trim();
+  const incomingBytes = file
+    ? Number(file.size || 0)
+    : new TextEncoder().encode(pastedText).length;
+  const fileValidationError = validateSelectedFile(file, { fieldLabel: "Uploaded file" });
+  if (fileValidationError) {
+    materialsStatus.textContent = fileValidationError;
+    return;
+  }
   if (!file && !pastedText) {
     materialsStatus.textContent = "Add a file or paste notes first.";
+    return;
+  }
+  if (getCurrentLibraryUsageBytes() + incomingBytes > maxMaterialLibrarySizeBytes) {
+    materialsStatus.textContent = `Library is full. Keep total materials under ${formatFileSize(maxMaterialLibrarySizeBytes)}.`;
     return;
   }
 
@@ -2225,6 +2595,11 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
   }
 
   const sampleStyleFile = materialsMockStyleFileInput.files?.[0] || null;
+  const sampleStyleValidationError = validateSelectedFile(sampleStyleFile, { fieldLabel: "Sample exam file" });
+  if (sampleStyleValidationError) {
+    materialsStatus.textContent = sampleStyleValidationError;
+    return;
+  }
   createMaterialsMockTestButton.disabled = true;
   materialsStatus.textContent = "Creating mock test from your material...";
   try {
@@ -2268,7 +2643,6 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
     materialsStatus.textContent = "Mock test opened in Plan.";
     materialsMockStyleFileInput.value = "";
     setActiveView("plan");
-    diagnosticForm.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     materialsStatus.textContent = error.message;
   } finally {
@@ -2285,12 +2659,19 @@ startDiagnosticButton.addEventListener("click", async () => {
 
   const topic = diagnosticTopicInput.value.trim();
   if (!topic) {
+    if (diagnosticHomeStatus) {
+      diagnosticHomeStatus.textContent = "Choose a topic first.";
+    }
     assessmentStatus.textContent = "Choose a topic first so the diagnostic can be personalized.";
     diagnosticTopicInput.focus();
     return;
   }
 
   startDiagnosticButton.disabled = true;
+  if (diagnosticHomeStatus) {
+    diagnosticHomeStatus.textContent = "Opening diagnostic workspace...";
+  }
+  showPlanWorkspace("diagnostic");
   assessmentStatus.textContent = "Generating your diagnostic...";
   diagnosticResult.classList.add("hidden");
 
@@ -2321,6 +2702,9 @@ startDiagnosticButton.addEventListener("click", async () => {
     diagnosticForm.classList.remove("hidden");
     updateAssessmentActions();
     assessmentStatus.textContent = `Diagnostic ready: ${data.question_count} questions on ${data.topic}.`;
+    if (diagnosticHomeStatus) {
+      diagnosticHomeStatus.textContent = "Diagnostic ready in the focused workspace.";
+    }
   } catch (error) {
     assessmentStatus.textContent = error.message;
   } finally {
@@ -2508,40 +2892,42 @@ deleteAllMaterialsButton.addEventListener("click", async () => {
   await deleteAllMaterials();
 });
 
-demoPersonasBoard.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-demo-persona]");
-  if (!button) {
-    return;
-  }
-  applyDemoPersona(button.dataset.demoPersona);
-});
-
 focusTabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     setActiveView(tab.dataset.viewTarget);
+    if (tab.dataset.viewTarget === "plan") {
+      showPlanWorkspace("home");
+    }
+    if (tab.dataset.viewTarget === "insights") {
+      showInsightsWorkspace("home");
+    }
   });
 });
 
-voiceInputButton.addEventListener("click", () => {
-  if (!speechRecognition) {
-    voiceStatus.textContent = "Voice recognition is not available in this browser.";
-    return;
-  }
-  if (isListening) {
-    speechRecognition.stop();
-    return;
-  }
-  speechRecognition.start();
-});
+if (voiceInputButton) {
+  voiceInputButton.addEventListener("click", () => {
+    if (!speechRecognition) {
+      setVoiceStatus("Voice recognition is not available in this browser.");
+      return;
+    }
+    if (isListening) {
+      speechRecognition.stop();
+      return;
+    }
+    speechRecognition.start();
+  });
+}
 
-voiceReplyButton.addEventListener("click", () => {
-  if (!lastAgentReply) {
-    voiceStatus.textContent = "No tutor reply available to speak yet.";
-    return;
-  }
-  speakText(lastAgentReply.replace(/[#*_`>-]/g, " "));
-  voiceStatus.textContent = "Speaking the latest tutor reply.";
-});
+if (voiceReplyButton) {
+  voiceReplyButton.addEventListener("click", () => {
+    if (!lastAgentReply) {
+      setVoiceStatus("No tutor reply available to speak yet.");
+      return;
+    }
+    speakText(lastAgentReply.replace(/[#*_`>-]/g, " "));
+    setVoiceStatus("Speaking the latest tutor reply.");
+  });
+}
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2591,6 +2977,9 @@ chatForm.addEventListener("submit", async (event) => {
     if (!response.ok) {
       throw new Error(data.error || "Request failed.");
     }
+    if (data.session) {
+      applySession(data.session);
+    }
     appendMessage("agent", data.reply);
     await refreshLearnerState();
     await refreshMasteryBoard();
@@ -2607,14 +2996,19 @@ chatForm.addEventListener("submit", async (event) => {
 });
 
 await bootstrapAuth();
+await refreshSession();
 setupVoiceRecognition();
 setActiveView(window.localStorage.getItem(activeViewStorageKey) || "tutor");
-ensureIdentity();
+showPlanWorkspace("home");
+showInsightsWorkspace("home");
+updateAuthPill(
+  getIdToken() ? (activeSession.displayName || "Signed in") : (activeSession.displayName || "Guest session"),
+  !getIdToken()
+);
 restoreSession();
+autoresizePrompt();
 await refreshLearnerState();
 await refreshMasteryBoard();
 await refreshRoadmap();
 await refreshMaterials();
 await refreshInsights();
-await refreshSystemStatus();
-await refreshDemoKit();

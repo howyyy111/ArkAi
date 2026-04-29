@@ -13,9 +13,10 @@ from googleapiclient.discovery import build
 
 import firebase_admin
 from firebase_admin import firestore
+from google.cloud import firestore as google_cloud_firestore
 
 try:
-    from .learner_state import (
+    from learner_state import (
         generate_weekly_report,
         get_roadmap,
         list_study_notes,
@@ -42,7 +43,13 @@ try:
         firebase_admin.initialize_app(options={"projectId": _gcp_project})
     else:
         firebase_admin.initialize_app()
-    db = firestore.client()
+    
+    database_id = (os.environ.get("FIRESTORE_DATABASE") or "").strip()
+    if database_id:
+        db = google_cloud_firestore.Client(project=_gcp_project or None, database=database_id)
+    else:
+        db = firestore.client()
+
     if not _running_on_cloud_run():
         # Validate that firestore actually exists in the project by testing a read
         db.collection("test").document("test").get()
@@ -56,6 +63,10 @@ from pygments.token import Token
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
 TOKEN_PATH = BASE_DIR / "token.json"
 USER_GOOGLE_TOKENS_DIR = BASE_DIR / "user_google_tokens"
+AUTH_CALLBACK_CREDENTIAL_PATHS = (
+    CREDENTIALS_PATH,
+    BASE_DIR.parent / "auth_function" / "credentials.json",
+)
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar.events',
@@ -92,16 +103,30 @@ def _production_https_redirect_uri_from_secrets(path: Path) -> str | None:
 
 def _cloud_oauth_redirect_uri() -> str:
     """Same URI must be used by the MCP (authorize) and the callback service (token)."""
-    env_uri = (os.environ.get("AUTH_CALLBACK_URL") or "").strip()
-    from_file = _production_https_redirect_uri_from_secrets(CREDENTIALS_PATH)
-    if env_uri:
-        return env_uri
-    if from_file:
-        return from_file
+    for key in ("OAUTH_REDIRECT_URI", "AUTH_CALLBACK_URL"):
+        env_uri = (os.environ.get(key) or "").strip()
+        if env_uri:
+            return env_uri
+
+    for path in AUTH_CALLBACK_CREDENTIAL_PATHS:
+        from_file = _production_https_redirect_uri_from_secrets(path)
+        if from_file:
+            return from_file
     return ""
 
 def _safe_user_id_for_path(user_id: str) -> str:
     return "".join(c if c.isalnum() or c in "@._-" else "_" for c in str(user_id).strip())[:200]
+
+
+def _user_google_oauth_doc(user_id: str):
+    if not db:
+        return None
+    return (
+        db.collection("users")
+        .document(str(user_id).strip())
+        .collection("integrations")
+        .document("google_oauth")
+    )
 
 def _user_google_token_path(user_id: str) -> Path:
     USER_GOOGLE_TOKENS_DIR.mkdir(parents=True, exist_ok=True)
@@ -118,7 +143,20 @@ def _load_google_credentials_from_disk(user_id: str):
 def _persist_google_credentials(user_id: str, creds: Credentials) -> None:
     payload = json.loads(creds.to_json())
     if db:
-        db.collection("user_tokens").document(user_id).set(payload)
+        db.collection("users").document(str(user_id).strip()).set(
+            {
+                "user_id": str(user_id).strip(),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        _user_google_oauth_doc(user_id).set(
+            {
+                **payload,
+                "provider": "google_oauth",
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
     else:
         path = _user_google_token_path(user_id)
         path.write_text(creds.to_json(), encoding="utf-8")
@@ -142,29 +180,40 @@ def _oauth_via_local_browser(user_id: str):
     _persist_google_credentials(user_id, creds)
     return creds
 
+def _normalize_oauth_user_id(user_id: str) -> str:
+    return str(user_id or "").strip().lower()
+
+
 def get_google_credentials(user_id):
-    if not user_id or str(user_id).strip() == "":
+    normalized_user_id = _normalize_oauth_user_id(user_id)
+    if not normalized_user_id:
         return {
             "status": "error",
-            "message": "CRITICAL RULE VIOLATION: You MUST ask the user for their username or Gmail address first! You passed an empty user_id string to the tool."
+            "message": "Missing Google authorization identity. Use the active ARKAI app user_id or the Gmail the user already provided for Google authorization."
         }
 
     creds = None
     if db:
-        doc = db.collection("user_tokens").document(user_id).get()
+        doc = _user_google_oauth_doc(normalized_user_id).get()
         if doc.exists:
             creds = Credentials.from_authorized_user_info(doc.to_dict(), SCOPES)
     else:
-        creds = _load_google_credentials_from_disk(user_id)
+        creds = _load_google_credentials_from_disk(normalized_user_id)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
                 if db:
-                    db.collection("user_tokens").document(user_id).update({"token": creds.token})
+                    _user_google_oauth_doc(normalized_user_id).set(
+                        {
+                            "token": creds.token,
+                            "updated_at": firestore.SERVER_TIMESTAMP,
+                        },
+                        merge=True,
+                    )
                 else:
-                    _persist_google_credentials(user_id, creds)
+                    _persist_google_credentials(normalized_user_id, creds)
                 return creds
             except Exception:
                 pass
@@ -199,8 +248,13 @@ def get_google_credentials(user_id):
             pass
 
         if not auth_url:
-            # Fallback to the cloud function if AUTH_CALLBACK_URL is missing
-            auth_url = "https://us-central1-arkai-492511.cloudfunctions.net/auth_function"
+            return {
+                "status": "error",
+                "message": (
+                    "AUTH_CALLBACK_URL is missing. Please set it to the URL of the deployed auth_function "
+                    "or ensure it is derived from your credentials.json file."
+                ),
+            }
 
         # Load client config directly from credentials.json
         import json
@@ -210,7 +264,7 @@ def get_google_credentials(user_id):
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            state=user_id,
+            state=normalized_user_id,
             autogenerate_code_verifier=False,
         )
         flow.redirect_uri = auth_url  # must match Cloud Function OAUTH_REDIRECT_URI / Console entry
@@ -238,7 +292,7 @@ def get_google_credentials(user_id):
                 "2) Include a clickable markdown link exactly like this on its own line: [Open Google Sign-In](authorization_url)\n"
                 "3) Then include one short fallback line telling them to copy the raw URL into Chrome or Safari if the in-app browser does not show Google properly.\n"
                 f"4) Raw URL fallback: {authorization_url}\n"
-                "5) Say they should see Google's account picker and permission screen for Docs/Calendar/Tasks; after the Success page on the callback site, return to chat and ask to save again using the same user_id.\n"
+                "5) Say they should see Google's account picker and permission screen for Docs/Calendar/Tasks; after the Success page on the callback site, return to chat and retry the same save/schedule action.\n"
                 "Use the tool field `authorization_url` if you need the raw string again.\n"
                 "If the user reports Google error 401 invalid_client or 'OAuth client was not found', tell them: the OAuth Web Client ID in the deployed credentials.json "
                 f"(this server uses oauth_client_id={oauth_cid}, project={oauth_proj}) must exist in Google Cloud Console under that project (APIs & Services → Credentials). "
@@ -521,6 +575,42 @@ def save_weekly_report_doc(user_id: str, title: str = "") -> dict:
         user_id=user_id,
         title=report_title,
         note_text=report.get("note_text", ""),
+    )
+
+@mcp.tool()
+def save_assessment_doc(user_id: str, assessment_id: str, title: str = "") -> dict:
+    """Saves a mock test or assessment to Google Docs."""
+    from learner_state import _get_assessment_record
+    record = _get_assessment_record(user_id, assessment_id)
+    if not record:
+        return {"status": "error", "message": "Assessment not found."}
+    
+    report_title = title or f"ARKAIS Mock Test: {record.get('topic', 'General')}"
+    
+    lines = []
+    lines.append(report_title)
+    lines.append(f"Topic: {record.get('topic', 'General learning')}")
+    lines.append(f"Level: {record.get('level', 'beginner')}")
+    if record.get('goal'):
+        lines.append(f"Goal: {record.get('goal')}")
+    lines.append("")
+    
+    for i, question in enumerate(record.get("questions", [])):
+        q_type = question.get("question_type", "multiple_choice").replace("_", " ")
+        lines.append(f"Question {i + 1} ({q_type})")
+        lines.append(question.get("prompt", ""))
+        
+        if question.get("question_type", "multiple_choice") == "multiple_choice":
+            options = question.get("options", {})
+            for key in ["A", "B", "C", "D"]:
+                if key in options:
+                    lines.append(f"{key}) {options[key]}")
+        lines.append("")
+        
+    return save_google_doc_note(
+        user_id=user_id,
+        title=report_title,
+        note_text="\n".join(lines),
     )
 
 @mcp.tool()

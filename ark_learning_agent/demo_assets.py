@@ -1,10 +1,10 @@
 from typing import Any
 
-from .learner_state import get_evaluation_snapshot, get_intervention_plan, get_learner_state
-
 try:
+    from .learner_state import get_evaluation_snapshot, get_intervention_plan, get_learner_state
     from .materials import list_learning_materials
 except ImportError:
+    from learner_state import get_evaluation_snapshot, get_intervention_plan, get_learner_state
     from materials import list_learning_materials
 
 

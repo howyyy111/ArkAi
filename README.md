@@ -11,7 +11,7 @@ ARKAIS is an intelligent, AI-driven learning and teaching assistant built levera
     *   **Google Calendar:** Schedules follow-up lessons, checks your timezone, and adds learning sessions to your calendar.
     *   **Google Tasks:** Adds homework and study tasks.
 *   **Persistent Progress Tracking:** Stores learner profiles, learning patterns, learner state, notes, and historical progress in Firebase Firestore, with SQLite fallback for local-only development.
-*   **Firebase Auth Ready Frontend:** Supports Google Sign-In on the web UI and uses the same learner identity across chat, persistence, and Google Workspace actions.
+*   **Firebase Auth Ready Frontend:** Supports Google Sign-In on the web UI, issues secure server-side session cookies, and uses the same learner identity across chat, persistence, and Google Workspace actions.
 *   **Diagnostics And Mastery Engine:** Generates short diagnostics, scores quiz attempts, tracks concept weaknesses, and updates topic mastery over time.
 *   **Living Roadmaps:** Generates milestone-based study plans with checkpoints, tracks session completion, and automatically switches into recovery mode when the learner falls behind.
 *   **Grounded Materials Library:** Supports uploading notes, code/text files, and study images for grounded tutoring with source-aware answers.
@@ -66,8 +66,73 @@ FIREBASE_APP_ID=your-firebase-web-app-id
 # FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 ```
 
-If the Firebase web variables are not set, the frontend falls back to a Gmail prompt for local demos.
+If the Firebase web variables are not set, the frontend falls back to an isolated guest session for local demos.
 If you want to force local persistence during development, set `ARKAIS_FORCE_SQLITE=1`.
+
+### Firestore security rules
+
+This repo now includes Firestore rules in [`firestore.rules`](./firestore.rules) and a minimal [`firebase.json`](./firebase.json).
+
+The rules assume:
+
+*   application data lives under `users/{uid}/...`
+*   a signed-in Firebase user can only access their own `users/{uid}` subtree
+*   sensitive service-managed records such as `users/{uid}/integrations/google_oauth` and top-level `browser_clients` are denied for direct client access
+
+To deploy the rules:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+If you do not use the Firebase CLI yet, install it first and log in:
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase use your-project-id
+```
+
+### Retention and cleanup
+
+Guest identities and chat history now include an `expires_at` field so you can manage retention cleanly.
+
+Current defaults:
+
+*   guest/browser identities: 30 days
+*   chat sessions: 90 days
+*   chat messages: 90 days
+
+Override them with environment variables:
+
+```env
+ARKAIS_BROWSER_CLIENT_RETENTION_DAYS=30
+ARKAIS_CHAT_SESSION_RETENTION_DAYS=90
+ARKAIS_CHAT_MESSAGE_RETENTION_DAYS=90
+```
+
+Run a dry-run cleanup:
+
+```bash
+python3 scripts/cleanup_expired_data.py
+```
+
+Apply the cleanup:
+
+```bash
+python3 scripts/cleanup_expired_data.py --apply
+```
+
+If you want Firestore to enforce expiry automatically, configure TTL policies on these collection groups using the `expires_at` field:
+
+*   `users`
+*   `browser_clients`
+*   `chat_sessions`
+*   `messages`
+
+Google Workspace OAuth tokens now live under each user record at:
+
+*   `users/{uid}/integrations/google_oauth`
 
 Supported local material upload types in the current prototype:
 
@@ -103,7 +168,7 @@ To start interacting with the agents:
 
 1.  Ensure you have initialized your Python environment and the SQLite/Firestore databases are accessible.
 2.  Run the agent application. The MCP Server will launch internally as a subprocess.
-3.  Whenever the agents attempt to interact with Google Workspace tools for the first time, you will be provided with an OAuth authorization URL (if an active Firebase token is not found using your username).
+3.  Whenever the agents attempt to interact with Google Workspace tools for the first time, you will be provided with an OAuth authorization URL if no stored Google Workspace token exists for the signed-in learner identity.
 4.  Click the authorization link, approve the required scopes, and the `auth_function` will catch the redirect, saving your secure token centrally.
 
 ## 🖥️ Minimal Frontend
@@ -123,7 +188,7 @@ The frontend server uses port `4173` by default so it does not clash with a serv
 This frontend currently provides:
 
 *   A minimal ARKAIS chat interface
-*   Firebase Auth based Google Sign-In when configured, with Gmail fallback for local demos
+*   Firebase Auth based Google Sign-In when configured, with isolated guest sessions for local demos
 *   A study console that sends requests to the local Python ADK agent via `/api/chat`
 *   A learner-state strip showing the current topic, activity count, and next recommended action
 *   A diagnostic panel that generates a short assessment, scores it, and updates the mastery board
@@ -196,7 +261,7 @@ If you do not need Google Docs / Calendar / Tasks yet, you can deploy without it
 
 1.  Wait for the build and deploy to finish
 2.  Open the Cloud Run service URL shown by `gcloud`
-3.  Enter a username in the frontend modal
+3.  Sign in with Google or continue as a guest session
 4.  Start chatting with the agent
 
 ### Notes

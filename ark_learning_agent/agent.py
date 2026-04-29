@@ -6,21 +6,38 @@ from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
-from .tools import (
-    build_or_update_roadmap,
-    create_assessment,
-    generate_weekly_report,
-    get_evaluation_snapshot,
-    get_intervention_plan,
-    get_learner_profile,
-    get_learner_state,
-    get_mastery_snapshot,
-    get_roadmap,
-    save_learning_progress,
-    get_learning_history,
-    save_learner_profile,
-    update_roadmap_session,
-)
+try:
+    from .tools import (
+        build_or_update_roadmap,
+        create_assessment,
+        generate_weekly_report,
+        get_evaluation_snapshot,
+        get_intervention_plan,
+        get_learner_profile,
+        get_learner_state,
+        get_mastery_snapshot,
+        get_roadmap,
+        save_learning_progress,
+        get_learning_history,
+        save_learner_profile,
+        update_roadmap_session,
+    )
+except ImportError:
+    from tools import (
+        build_or_update_roadmap,
+        create_assessment,
+        generate_weekly_report,
+        get_evaluation_snapshot,
+        get_intervention_plan,
+        get_learner_profile,
+        get_learner_state,
+        get_mastery_snapshot,
+        get_roadmap,
+        save_learning_progress,
+        get_learning_history,
+        save_learner_profile,
+        update_roadmap_session,
+    )
 
 MODEL = "gemini-2.5-flash"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -79,13 +96,15 @@ TOOL_EXECUTION_RULES = """
         Saving workflow rule:
         - Do not auto-save newly generated content unless the user clearly asked to save it.
         - If the user asks to save content, execute the save tool directly once the needed info is available.
-        - If the user has not yet provided the needed Google email or user_id, ask for it briefly first.
+        - Use the active ARKAI app user_id from the conversation context when available.
+        - If the active app user_id is a guest id and the user already provided a Gmail for Google authorization, use that Gmail.
+        - If neither is available, ask for the needed Google email or user_id briefly.
         - Do not retry a failed save by printing the tool call.
 
         Google Docs save rules:
         - If the user asks to save notes, a lesson, code, math content, or a roadmap, directly execute `save_google_doc_note`.
         - Use:
-          - `user_id` for the user's confirmed Gmail or chosen user_id already used in the workflow
+          - `user_id` for the active ARKAI app user_id, or the user's confirmed Gmail when they already authorized with that Gmail
           - `title` for a short, clean document title
           - `note_text` for the readable document content
           - `code_snippet` only if there is actual code that should be formatted
@@ -207,8 +226,9 @@ teaching_agent = Agent(
         - optionally create follow-up tasks or schedule lessons
 
         Google Docs / Calendar / Tasks:
-        - Only ask for Gmail or username when the user clearly wants to save or schedule something
-        - Use that value consistently as `user_id`
+        - Prefer the active ARKAI app user_id supplied by the frontend context.
+        - If the session is a guest session and the user has already provided a Gmail for Google authorization, use that Gmail.
+        - Only ask for Gmail or username when no usable app user_id or authorized Gmail is available.
 
         Consent rule for Google Calendar:
         - Never create a Google Calendar event unless the user clearly asks for it or explicitly says yes
@@ -383,8 +403,9 @@ roadmap_agent = Agent(
         - Do not treat productivity actions as separate steps unless necessary
 
         Google interaction rules:
-        - Only ask for Gmail or username when the user explicitly wants saving or scheduling
-        - Use it consistently as `user_id`
+        - Prefer the active ARKAI app user_id supplied by the frontend context.
+        - If the session is a guest session and the user has already provided a Gmail for Google authorization, use that Gmail.
+        - Only ask for Gmail or username when no usable app user_id or authorized Gmail is available.
 
         Consent rule for Google Calendar:
         - Never create a Google Calendar event unless the user explicitly asks for calendar scheduling or clearly agrees to it
@@ -645,8 +666,9 @@ root_agent = Agent(
         - If the user accepts, continue the workflow smoothly by asking only for the missing details needed to complete the action
 
         Google interaction:
-        - Ask for Gmail or username ONLY when the user confirms they want saving or scheduling
-        - Use the exact same value as `user_id`
+        - Prefer the active ARKAI app user_id supplied by the frontend context.
+        - If the session is a guest session and the user has already provided a Gmail for Google authorization, use that Gmail.
+        - Ask for Gmail or username ONLY when no usable app user_id or authorized Gmail is available.
 
         Google Calendar consent rule:
         - Never create a Google Calendar event unless the user clearly asks for it or explicitly agrees to it
