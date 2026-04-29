@@ -235,6 +235,40 @@ class FrontendServerTests(unittest.TestCase):
         self.assertEqual(delete_result["status"], "success")
         self.assertEqual(sessions_after_delete["sessions"], [])
 
+    def test_google_doc_formatter_uses_latest_prompt_and_answer(self):
+        messages = [
+            {"role": "user", "content": "Teach me binary search."},
+            {"role": "agent", "content": "Binary search halves the search space each step."},
+            {"role": "user", "content": "save this to google docs"},
+        ]
+
+        formatted = frontend_server._format_chat_messages_for_google_doc(messages)
+
+        self.assertIn("ArkAI Tutor Notes", formatted)
+        self.assertIn("Prompt\nTeach me binary search.", formatted)
+        self.assertIn("Tutor response\nBinary search halves the search space each step.", formatted)
+        self.assertNotIn("save this to google docs", formatted.lower())
+
+    def test_google_destination_formatters_are_purpose_specific(self):
+        long_answer = "Use a sorted array. " * 250
+        messages = [
+            {"role": "user", "content": "Explain binary search and give me practice."},
+            {"role": "agent", "content": long_answer},
+            {"role": "user", "content": "save in google calendar tomorrow at 9am"},
+        ]
+
+        drive_text = frontend_server._format_chat_messages_for_google_drive(messages)
+        task_notes = frontend_server._format_chat_messages_for_google_task(messages)
+        calendar_description = frontend_server._format_chat_messages_for_google_calendar(messages)
+
+        self.assertTrue(drive_text.startswith("# ArkAI Tutor Notes"))
+        self.assertIn("## Prompt", drive_text)
+        self.assertIn("Created from ArkAI Tutor.", task_notes)
+        self.assertLessEqual(len(task_notes), 3200)
+        self.assertIn("ArkAI Tutor study session.", calendar_description)
+        self.assertLessEqual(len(calendar_description), 1700)
+        self.assertNotIn("save in google calendar", calendar_description.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

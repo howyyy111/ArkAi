@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import datetime
 import json
 from pathlib import Path
+import re
 import secrets
 import zoneinfo
 from mcp.server.fastmcp import FastMCP
@@ -361,6 +362,102 @@ def get_drive_folder_id(drive_service, folder_name="Adaptive Learning Assistant 
         return folder.get('id')
     return items[0].get('id')
 
+
+def _clean_google_export_text(value: str) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
+def _google_doc_line_ranges(text: str) -> list[dict]:
+    ranges = []
+    index = 1
+    for line in text.splitlines(keepends=True):
+        line_without_newline = line.rstrip("\n")
+        start = index
+        end = index + len(line_without_newline)
+        stripped = line_without_newline.strip()
+        if stripped:
+            ranges.append(
+                {
+                    "text": stripped,
+                    "start": start,
+                    "end": end,
+                    "paragraph_end": index + len(line),
+                }
+            )
+        index += len(line)
+    return ranges
+
+
+def _google_doc_formatting_requests(text: str) -> list[dict]:
+    requests = []
+    for position, line in enumerate(_google_doc_line_ranges(text)):
+        line_text = line["text"]
+        paragraph_range = {"startIndex": line["start"], "endIndex": max(line["start"] + 1, line["paragraph_end"])}
+        text_range = {"startIndex": line["start"], "endIndex": line["end"]}
+
+        if position == 0:
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": paragraph_range,
+                        "paragraphStyle": {"namedStyleType": "TITLE", "spaceBelow": {"magnitude": 12, "unit": "PT"}},
+                        "fields": "namedStyleType,spaceBelow",
+                    }
+                }
+            )
+            continue
+
+        if line_text in {"Prompt", "Tutor response", "Earlier context", "Notes", "Focus", "Summary"}:
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": paragraph_range,
+                        "paragraphStyle": {"namedStyleType": "HEADING_2", "spaceAbove": {"magnitude": 10, "unit": "PT"}},
+                        "fields": "namedStyleType,spaceAbove",
+                    }
+                }
+            )
+            continue
+
+        if line_text.startswith("- "):
+            requests.append(
+                {
+                    "createParagraphBullets": {
+                        "range": paragraph_range,
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }
+                }
+            )
+
+        if line_text.startswith("You:") or line_text.startswith("ArkAI:"):
+            colon_index = line_text.find(":")
+            requests.append(
+                {
+                    "updateTextStyle": {
+                        "range": {"startIndex": line["start"], "endIndex": line["start"] + colon_index + 1},
+                        "textStyle": {"bold": True},
+                        "fields": "bold",
+                    }
+                }
+            )
+
+        if line["end"] > line["start"]:
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": text_range,
+                        "paragraphStyle": {
+                            "lineSpacing": 115,
+                            "spaceBelow": {"magnitude": 6, "unit": "PT"},
+                        },
+                        "fields": "lineSpacing,spaceBelow",
+                    }
+                }
+            )
+    return requests
+
 @mcp.tool()
 def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet: str = "", language: str = "") -> dict:
     """Saves a note and optionally syntax-formatted code snippet to a new Google Doc.
@@ -392,9 +489,10 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
         fields='id, parents'
     ).execute()
     
-    # 3. Format requests
+    # 3. Insert content and apply readable document styling.
     requests = []
-    full_text = note_text + "\n\n"
+    cleaned_note_text = _clean_google_export_text(note_text)
+    full_text = (cleaned_note_text or "No note content was provided.") + "\n\n"
     current_index = 1
     
     requests.append({
@@ -404,6 +502,7 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
         }
     })
     current_index += len(full_text)
+    requests.extend(_google_doc_formatting_requests(full_text))
     
     if code_snippet:
         try:
@@ -480,24 +579,24 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
 
 @mcp.tool()
 def save_text_file_to_drive(user_id: str, title: str, content: str) -> dict:
-    """Saves plain text content as a file in the ArkAI Google Drive folder."""
+    """Saves readable Markdown content as a file in the ArkAI Google Drive folder."""
     creds = get_google_credentials(user_id)
     if isinstance(creds, dict):
         return creds
     drive_service = build('drive', 'v3', credentials=creds)
     folder_id = get_drive_folder_id(drive_service)
     safe_title = str(title or "ArkAI Tutor Notes").strip() or "ArkAI Tutor Notes"
-    if not safe_title.lower().endswith(".txt"):
-        safe_title = f"{safe_title}.txt"
+    if not safe_title.lower().endswith((".md", ".txt")):
+        safe_title = f"{safe_title}.md"
     media = MediaInMemoryUpload(
-        str(content or "").encode("utf-8"),
-        mimetype="text/plain",
+        _clean_google_export_text(content or "No tutor content was available to save yet.").encode("utf-8"),
+        mimetype="text/markdown",
         resumable=False,
     )
     file_metadata = {
         "name": safe_title,
         "parents": [folder_id],
-        "mimeType": "text/plain",
+        "mimeType": "text/markdown",
     }
     result = drive_service.files().create(
         body=file_metadata,
@@ -557,10 +656,20 @@ def create_roadmap_tasks(user_id: str, include_due_dates: bool = False) -> dict:
             if session.get("status") == "completed":
                 continue
             due_day = session.get("due_date") if include_due_dates else None
+            notes = "\n".join(
+                part
+                for part in (
+                    "Created from ArkAI roadmap.",
+                    f"Focus: {session.get('focus')}" if session.get("focus") else "",
+                    f"Phase goal: {phase.get('goal')}" if phase.get("goal") else "",
+                )
+                if part
+            )
             task_result = create_study_task(
                 user_id=user_id,
                 task_title=f"{phase.get('title')}: {session.get('title')}",
                 due_day=due_day,
+                notes=notes,
             )
             if task_result.get("status") == "success":
                 created.append(

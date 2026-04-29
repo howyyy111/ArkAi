@@ -374,31 +374,132 @@ def _is_google_save_request(message: str) -> bool:
     )
 
 
+def _clean_google_save_text(value: Any) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
+def _truncate_google_save_text(value: Any, limit: int) -> str:
+    text = _clean_google_save_text(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _google_save_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    cleaned: list[dict[str, str]] = []
+    for message in messages:
+        content = _clean_google_save_text(message.get("content", ""))
+        if not content or _is_google_save_request(content):
+            continue
+        role = str(message.get("role", "")).strip().lower()
+        author = "You" if role == "user" else "ArkAI"
+        cleaned.append({"role": role, "author": author, "content": content})
+    return cleaned
+
+
+def _latest_google_save_content(cleaned_messages: list[dict[str, str]], role: str) -> str:
+    role = role.lower()
+    for message in reversed(cleaned_messages):
+        if message.get("role") == role:
+            return message.get("content", "")
+    return ""
+
+
 def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
     for message in messages:
         if str(message.get("role", "")).lower() == "user":
             content = str(message.get("content", "")).strip()
             if content and not _is_google_save_request(content):
-                return f"ArkAI Tutor - {content[:48]}"
+                cleaned = re.sub(r"\s+", " ", content)
+                return f"ArkAI Tutor - {cleaned[:48]}"
     return "ArkAI Tutor Notes"
 
 
 def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
+    cleaned_messages = _google_save_messages(messages)
     lines = ["ArkAI Tutor Notes", ""]
-    saved_any = False
-    for message in messages:
-        content = str(message.get("content", "")).strip()
-        if not content or _is_google_save_request(content):
-            continue
-        role = str(message.get("role", "")).strip().lower()
-        author = "You" if role == "user" else "ArkAI"
-        lines.append(f"{author}:")
-        lines.append(content)
-        lines.append("")
-        saved_any = True
-    if not saved_any:
+    if not cleaned_messages:
         lines.append("No tutor content was available to save yet.")
+        return "\n".join(lines).strip()
+
+    prompt = _latest_google_save_content(cleaned_messages, "user")
+    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
+        cleaned_messages,
+        "agent",
+    )
+
+    if prompt:
+        lines.extend(["Prompt", prompt, ""])
+    if answer:
+        lines.extend(["Tutor response", answer, ""])
+
+    earlier_messages = cleaned_messages[:-2] if len(cleaned_messages) > 2 else []
+    if earlier_messages:
+        lines.extend(["Earlier context"])
+        for message in earlier_messages[-6:]:
+            lines.append(f"{message['author']}: {_truncate_google_save_text(message['content'], 700)}")
+        lines.append("")
+
     return "\n".join(lines).strip()
+
+
+def _format_chat_messages_for_google_drive(messages: list[dict[str, Any]]) -> str:
+    cleaned_messages = _google_save_messages(messages)
+    lines = ["# ArkAI Tutor Notes", ""]
+    if not cleaned_messages:
+        lines.append("No tutor content was available to save yet.")
+        return "\n".join(lines).strip()
+
+    prompt = _latest_google_save_content(cleaned_messages, "user")
+    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
+        cleaned_messages,
+        "agent",
+    )
+    if prompt:
+        lines.extend(["## Prompt", prompt, ""])
+    if answer:
+        lines.extend(["## Tutor response", answer, ""])
+    if len(cleaned_messages) > 2:
+        lines.extend(["## Earlier context"])
+        for message in cleaned_messages[:-2][-6:]:
+            lines.append(f"- **{message['author']}**: {_truncate_google_save_text(message['content'], 500)}")
+    return "\n".join(lines).strip()
+
+
+def _format_chat_messages_for_google_task(messages: list[dict[str, Any]]) -> str:
+    cleaned_messages = _google_save_messages(messages)
+    if not cleaned_messages:
+        return "Created from ArkAI Tutor."
+    prompt = _latest_google_save_content(cleaned_messages, "user")
+    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
+        cleaned_messages,
+        "agent",
+    )
+    parts = ["Created from ArkAI Tutor."]
+    if prompt:
+        parts.extend(["", "Prompt:", _truncate_google_save_text(prompt, 600)])
+    if answer:
+        parts.extend(["", "Tutor response:", _truncate_google_save_text(answer, 2400)])
+    return "\n".join(parts).strip()
+
+
+def _format_chat_messages_for_google_calendar(messages: list[dict[str, Any]]) -> str:
+    cleaned_messages = _google_save_messages(messages)
+    if not cleaned_messages:
+        return "Created from ArkAI Tutor."
+    prompt = _latest_google_save_content(cleaned_messages, "user")
+    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
+        cleaned_messages,
+        "agent",
+    )
+    parts = ["ArkAI Tutor study session."]
+    if prompt:
+        parts.extend(["", "Focus:", _truncate_google_save_text(prompt, 350)])
+    if answer:
+        parts.extend(["", "Notes:", _truncate_google_save_text(answer, 1200)])
+    return "\n".join(parts).strip()
 
 
 def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[str, Any]:
@@ -424,6 +525,9 @@ def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[str, Any
         "messages": messages,
         "title": _chat_doc_title(messages),
         "note_text": _format_chat_messages_for_google_doc(messages),
+        "drive_text": _format_chat_messages_for_google_drive(messages),
+        "task_notes": _format_chat_messages_for_google_task(messages),
+        "calendar_description": _format_chat_messages_for_google_calendar(messages),
     }
 
 
@@ -449,7 +553,7 @@ def _save_tutor_chat_to_google_drive(user_id: str, session_id: str) -> dict[str,
     return save_text_file_to_drive(
         user_id=user_id,
         title=payload["title"],
-        content=payload["note_text"],
+        content=payload["drive_text"],
     )
 
 
@@ -462,7 +566,7 @@ def _save_tutor_chat_to_google_task(user_id: str, session_id: str) -> dict[str, 
     return create_study_task(
         user_id=user_id,
         task_title=f"Review {payload['title']}",
-        notes=payload["note_text"],
+        notes=payload["task_notes"],
     )
 
 
@@ -572,7 +676,7 @@ def _save_tutor_chat_to_google_calendar(user_id: str, session_id: str, message: 
         event_title=payload["title"],
         start_time_iso=start_time,
         end_time_iso=end_time,
-        description=payload["note_text"],
+        description=payload["calendar_description"],
     )
 
 
