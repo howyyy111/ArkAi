@@ -324,6 +324,9 @@ function updateMaterialsLibrarySummary() {
   }
   const used = getCurrentLibraryUsageBytes();
   materialsLibrarySummary.textContent = `Files and notes ready for grounded Q&A. ${formatFileSize(used)} used of ${formatFileSize(maxMaterialLibrarySizeBytes)}. Max ${formatFileSize(maxMaterialFileSizeBytes)} each.`;
+  if (deleteAllMaterialsButton) {
+    deleteAllMaterialsButton.disabled = latestMaterials.length === 0;
+  }
 }
 
 function getPreviousSessions() {
@@ -1257,7 +1260,7 @@ function formatMaterialTimeLabel(value) {
 function renderMaterials(materials = []) {
   latestMaterials = materials;
   if (!materials.length) {
-    materialsLibrary.innerHTML = `<p class="mastery-empty">Nothing uploaded yet.</p>`;
+    materialsLibrary.innerHTML = `<p class="mastery-empty">Upload a file or paste notes to build your materials library.</p>`;
     updateMaterialsLibrarySummary();
     updateMaterialsSelectionSummary();
     refreshOverview();
