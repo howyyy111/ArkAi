@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import datetime
 import json
 from pathlib import Path
+import secrets
 import zoneinfo
 from mcp.server.fastmcp import FastMCP
 
@@ -18,12 +19,19 @@ from google.cloud import firestore as google_cloud_firestore
 try:
     from learner_state import (
         generate_weekly_report,
+        get_firestore_client,
         get_roadmap,
         list_study_notes,
         save_study_note,
     )
 except ImportError:
-    from learner_state import generate_weekly_report, get_roadmap, list_study_notes, save_study_note
+    from .learner_state import (
+        generate_weekly_report,
+        get_firestore_client,
+        get_roadmap,
+        list_study_notes,
+        save_study_note,
+    )
 
 mcp = FastMCP("productivity-tools")
 
@@ -37,24 +45,7 @@ def _running_on_cloud_run() -> bool:
     return bool(os.environ.get("K_SERVICE"))
 
 
-try:
-    _gcp_project = (os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT") or "").strip()
-    if _gcp_project:
-        firebase_admin.initialize_app(options={"projectId": _gcp_project})
-    else:
-        firebase_admin.initialize_app()
-    
-    database_id = (os.environ.get("FIRESTORE_DATABASE") or "").strip()
-    if database_id:
-        db = google_cloud_firestore.Client(project=_gcp_project or None, database=database_id)
-    else:
-        db = firestore.client()
-
-    if not _running_on_cloud_run():
-        # Validate that firestore actually exists in the project by testing a read
-        db.collection("test").document("test").get()
-except Exception:
-    db = None
+db = get_firestore_client()
 
 from pygments import lex
 from pygments.lexers import get_lexer_by_name, guess_lexer
@@ -103,15 +94,22 @@ def _production_https_redirect_uri_from_secrets(path: Path) -> str | None:
 
 def _cloud_oauth_redirect_uri() -> str:
     """Same URI must be used by the MCP (authorize) and the callback service (token)."""
+    configured_uris = [
+        uri
+        for uri in (
+            _production_https_redirect_uri_from_secrets(path)
+            for path in AUTH_CALLBACK_CREDENTIAL_PATHS
+        )
+        if uri
+    ]
+
     for key in ("OAUTH_REDIRECT_URI", "AUTH_CALLBACK_URL"):
         env_uri = (os.environ.get(key) or "").strip()
-        if env_uri:
+        if env_uri and (not configured_uris or env_uri in configured_uris):
             return env_uri
 
-    for path in AUTH_CALLBACK_CREDENTIAL_PATHS:
-        from_file = _production_https_redirect_uri_from_secrets(path)
-        if from_file:
-            return from_file
+    if configured_uris:
+        return configured_uris[0]
     return ""
 
 def _safe_user_id_for_path(user_id: str) -> str:
@@ -127,6 +125,11 @@ def _user_google_oauth_doc(user_id: str):
         .collection("integrations")
         .document("google_oauth")
     )
+
+def _google_oauth_state_doc(state: str):
+    if not db:
+        return None
+    return db.collection("google_oauth_states").document(str(state).strip())
 
 def _user_google_token_path(user_id: str) -> Path:
     USER_GOOGLE_TOKENS_DIR.mkdir(parents=True, exist_ok=True)
@@ -160,6 +163,90 @@ def _persist_google_credentials(user_id: str, creds: Credentials) -> None:
     else:
         path = _user_google_token_path(user_id)
         path.write_text(creds.to_json(), encoding="utf-8")
+
+def _create_oauth_state(user_id: str) -> str:
+    normalized_user_id = _normalize_oauth_user_id(user_id)
+    if not db:
+        raise RuntimeError("Google OAuth state storage is unavailable.")
+    state = secrets.token_urlsafe(32)
+    _google_oauth_state_doc(state).set(
+        {
+            "user_id": normalized_user_id,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "status": "pending",
+        }
+    )
+    return state
+
+def google_oauth_status(user_id: str) -> dict:
+    normalized_user_id = _normalize_oauth_user_id(user_id)
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing signed-in user."}
+
+    has_credentials = False
+    if db:
+        doc = _user_google_oauth_doc(normalized_user_id).get()
+        has_credentials = doc.exists
+    else:
+        has_credentials = _user_google_token_path(normalized_user_id).is_file()
+
+    return {
+        "status": "success",
+        "connected": bool(has_credentials),
+        "message": "Google saves connected." if has_credentials else "Google saves are not connected.",
+    }
+
+def get_google_authorization_url(user_id: str) -> dict:
+    normalized_user_id = _normalize_oauth_user_id(user_id)
+    if not normalized_user_id:
+        return {"status": "error", "message": "Sign in before connecting Google saves."}
+    if normalized_user_id.startswith("guest:"):
+        return {"status": "error", "message": "Sign in with Google before connecting Docs, Calendar, and Tasks."}
+
+    existing = google_oauth_status(normalized_user_id)
+    if existing.get("connected"):
+        return {"status": "success", "connected": True, "message": "Google saves already connected."}
+
+    if not db:
+        return {
+            "status": "error",
+            "message": "Google saves are not ready because Firestore state storage is unavailable.",
+        }
+
+    if not CREDENTIALS_PATH.is_file():
+        return {
+            "status": "error",
+            "message": "Google OAuth is not configured: credentials.json is missing.",
+        }
+
+    auth_url = _cloud_oauth_redirect_uri()
+    if not auth_url:
+        return {
+            "status": "error",
+            "message": "AUTH_CALLBACK_URL is missing. Configure the Google OAuth callback URL first.",
+        }
+
+    with open(CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+        client_config = json.load(f)
+
+    oauth_state = _create_oauth_state(normalized_user_id)
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        state=oauth_state,
+        autogenerate_code_verifier=False,
+    )
+    flow.redirect_uri = auth_url
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt=_google_oauth_prompt(),
+    )
+    return {
+        "status": "auth_required",
+        "connected": False,
+        "authorization_url": authorization_url,
+        "message": "Open Google to allow ArkAI saves for Docs, Calendar, and Tasks.",
+    }
 
 def _oauth_via_local_browser(user_id: str):
     """Interactive Google sign-in for this machine; persists tokens for user_id.
@@ -240,63 +327,11 @@ def get_google_credentials(user_id):
                 ),
             }
 
-        auth_url = _cloud_oauth_redirect_uri()
-
-        # Local dev without Firestore: loopback browser login. On Cloud Run we always use hosted redirect + Firestore.
-        if not db and not _running_on_cloud_run():
-            # Bypass local server to always provide the sign-in link via the tool response!
-            pass
-
-        if not auth_url:
-            return {
-                "status": "error",
-                "message": (
-                    "AUTH_CALLBACK_URL is missing. Please set it to the URL of the deployed auth_function "
-                    "or ensure it is derived from your credentials.json file."
-                ),
-            }
-
-        # Load client config directly from credentials.json
-        import json
-        with open(CREDENTIALS_PATH, "r") as f:
-            client_config = json.load(f)
-
-        flow = Flow.from_client_config(
-            client_config,
-            scopes=SCOPES,
-            state=normalized_user_id,
-            autogenerate_code_verifier=False,
-        )
-        flow.redirect_uri = auth_url  # must match Cloud Function OAUTH_REDIRECT_URI / Console entry
-        authorization_url, _ = flow.authorization_url(
-            access_type="offline",
-            prompt=_google_oauth_prompt(),
-        )
-
-        oauth_cid = flow.client_config.get("client_id", "")
-        oauth_proj = flow.client_config.get("project_id", "")
-
         return {
             "status": "auth_required",
-            "authorization_url": authorization_url,
-            "oauth_redirect_uri": auth_url,
-            "oauth_client_id": oauth_cid,
-            "google_cloud_project_id": oauth_proj,
             "message": (
-                "CRITICAL INSTRUCTION FOR AI AGENT: Do NOT apologize or say sign-in is broken.\n"
-                "Google intentionally blocks OAuth sign-in inside many embedded chat / in-app browsers (including some Cloud Run ADK web UIs). "
-                "Clicking the link inside chat often shows a blank page or skips the Google screen.\n"
-                "You MUST show a clickable markdown link first, and also tell the user they can copy the raw URL into Chrome or Safari (full browser) if the in-app browser does not work.\n"
-                "Format for the user:\n"
-                "1) Short heading: e.g. 'Google sign-in (use your desktop browser)'\n"
-                "2) Include a clickable markdown link exactly like this on its own line: [Open Google Sign-In](authorization_url)\n"
-                "3) Then include one short fallback line telling them to copy the raw URL into Chrome or Safari if the in-app browser does not show Google properly.\n"
-                f"4) Raw URL fallback: {authorization_url}\n"
-                "5) Say they should see Google's account picker and permission screen for Docs/Calendar/Tasks; after the Success page on the callback site, return to chat and retry the same save/schedule action.\n"
-                "Use the tool field `authorization_url` if you need the raw string again.\n"
-                "If the user reports Google error 401 invalid_client or 'OAuth client was not found', tell them: the OAuth Web Client ID in the deployed credentials.json "
-                f"(this server uses oauth_client_id={oauth_cid}, project={oauth_proj}) must exist in Google Cloud Console under that project (APIs & Services → Credentials). "
-                "They should download a fresh client JSON, replace credentials.json in both the ADK/MCP image and the auth callback service, redeploy both, and ensure redirect URIs match."
+                "Connect Google saves from the ArkAI account menu before using Docs, Calendar, or Tasks. "
+                "For security, ArkAI only connects saves after the currently signed-in account grants permission."
             ),
         }
 

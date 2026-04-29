@@ -303,6 +303,30 @@ textarea:disabled {
     margin-top: 4px;
 }
 
+.google-saves-card {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.google-saves-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.google-saves-card strong {
+    display: block;
+    color: var(--text);
+    font-size: 0.86rem;
+    margin-top: 3px;
+}
+
 .dropdown-action {
     width: 100%;
     padding: 10px;
@@ -485,6 +509,10 @@ textarea:disabled {
     gap: 10px;
 }
 
+.materials-action-grid > .wide-button {
+    grid-column: 1 / -1;
+}
+
 .materials-settings {
     border: 1px solid rgba(28, 28, 28, 0.08);
     border-radius: 16px;
@@ -521,6 +549,65 @@ textarea:disabled {
     display: grid;
     gap: 12px;
     padding: 0 14px 14px;
+}
+
+.sample-exam-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(79, 74, 67, 0.72);
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.sample-exam-divider::before,
+.sample-exam-divider::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: rgba(28, 28, 28, 0.08);
+}
+
+.sample-exam-divider span {
+    flex: 0 0 auto;
+}
+
+.file-upload-field {
+    display: grid;
+    gap: 8px;
+}
+
+.file-input-control {
+    width: 100%;
+    min-height: 46px;
+    padding: 8px;
+    border: 1px solid rgba(28, 28, 28, 0.08);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.68);
+    color: rgba(79, 74, 67, 0.78);
+    font: inherit;
+    font-size: 0.86rem;
+}
+
+.file-input-control::file-selector-button {
+    margin-right: 12px;
+    border: 0;
+    border-radius: 12px;
+    background: #171717;
+    color: #ffffff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 700;
+    padding: 10px 14px;
+    transition: background 160ms ease, transform 160ms ease;
+}
+
+.file-input-control::file-selector-button:hover {
+    background: #2c2c2c;
+    transform: translateY(-1px);
 }
 
 .wide-button {
@@ -797,6 +884,7 @@ textarea:disabled {
 
 /* ── Drop Zone ───────────────────────────────── */
 .drop-zone {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -833,7 +921,11 @@ textarea:disabled {
 }
 
 .drop-zone input[type="file"] {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .drop-zone-icon {
@@ -1944,6 +2036,46 @@ textarea:focus {
     padding-bottom: 14px;
 }
 
+.workspace-header .roadmap-sync-actions {
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.roadmap-calendar-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(28, 28, 28, 0.07);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.roadmap-calendar-panel label {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+}
+
+.roadmap-calendar-panel label span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.roadmap-calendar-panel input {
+    min-height: 42px;
+    font-size: 0.9rem;
+}
+
+.roadmap-calendar-panel .ghost-button {
+    min-height: 42px;
+    white-space: nowrap;
+}
+
 .plan-workspace .diagnostic-form,
 .plan-workspace .diagnostic-result,
 .plan-workspace .roadmap-board {
@@ -2860,6 +2992,10 @@ textarea:focus {
 
     .roadmap-detail-kicker {
         text-align: left;
+    }
+
+    .roadmap-calendar-panel {
+        grid-template-columns: 1fr;
     }
 
     .voice-strip {

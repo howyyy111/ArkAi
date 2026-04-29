@@ -58,6 +58,13 @@
                                 <strong id="display-email">Not connected</strong>
                             </div>
                         </div>
+                        <div class="google-saves-card">
+                            <div>
+                                <span>Google saves</span>
+                                <strong id="google-saves-status">Not connected</strong>
+                            </div>
+                            <button id="connect-google-saves-button" class="dropdown-action" type="button">Connect</button>
+                        </div>
                         <button id="header-change-account" class="dropdown-action">Switch account</button>
                     </div>
                 </div>
@@ -269,6 +276,8 @@
                                 <div class="inline-actions">
                                     <button id="submit-diagnostic-button" class="primary-button"
                                         type="submit">Submit answers</button>
+                                    <button id="save-assessment-google-doc-button" class="ghost-button hidden"
+                                        type="button">Save to Google Docs</button>
                                 </div>
                             </form>
                             <div id="diagnostic-result" class="diagnostic-result hidden"></div>
@@ -279,6 +288,10 @@
                                 <div class="roadmap-heading">
                                     <h3>Your study path</h3>
                                     <div id="roadmap-status" class="assessment-status">Create your roadmap.</div>
+                                </div>
+                                <div class="inline-actions roadmap-sync-actions">
+                                    <button id="save-roadmap-tasks-button" class="ghost-button mini-button"
+                                        type="button" disabled>Save to Google Tasks</button>
                                 </div>
                             </div>
                             <div id="roadmap-session-detail" class="roadmap-session-detail nested-card">
@@ -309,7 +322,7 @@
                                         <span class="status-pill subtle">5 MB max</span>
                                     </div>
 
-                                    <label id="drop-zone" class="drop-zone" for="material-file">
+                                    <label id="drop-zone" class="drop-zone" for="material-file" role="button" tabindex="0">
                                         <div class="drop-zone-icon">
                                             <svg width="34" height="34" viewBox="0 0 24 24" fill="none"
                                                 stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
@@ -354,8 +367,7 @@
                                     </label>
 
                                     <div class="materials-action-grid">
-                                        <button id="ask-materials-button" class="primary-button" type="button">Ask in Tutor</button>
-                                        <button class="ghost-button" type="button" data-view-target="tutor">Open Tutor</button>
+                                        <button id="ask-materials-button" class="primary-button wide-button" type="button">Ask in Tutor</button>
                                     </div>
 
                                     <details class="materials-settings">
@@ -374,17 +386,19 @@
                                                 <textarea id="materials-mock-style" rows="3"
                                                     placeholder="Paste or describe the style of a previous exam."></textarea>
                                             </label>
-                                            <label>
+                                            <div class="sample-exam-divider" aria-hidden="true">
+                                                <span>or upload a sample exam</span>
+                                            </div>
+                                            <label class="file-upload-field">
                                                 <span class="eyebrow">Upload sample exam</span>
-                                                <input id="materials-mock-style-file" type="file"
+                                                <input id="materials-mock-style-file" class="file-input-control" type="file"
                                                     accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
                                             </label>
                                         </div>
                                     </details>
 
                                     <div class="materials-action-grid">
-                                        <button id="create-materials-mock-test-button" class="ghost-button" type="button">Create mock test</button>
-                                        <button class="ghost-button" type="button" data-view-target="plan">Open Plan</button>
+                                        <button id="create-materials-mock-test-button" class="ghost-button wide-button" type="button">Create mock test</button>
                                     </div>
                                     <div id="materials-status" class="assessment-status">Upload notes, then ask.</div>
                                 </section>
@@ -558,6 +572,25 @@
             const zone = document.getElementById('drop-zone');
             const input = document.getElementById('material-file');
             if (!zone || !input) return;
+            const title = zone.querySelector('.drop-zone-title');
+            const status = document.getElementById('materials-status');
+            const originalTitle = title ? title.textContent : 'Drop file or browse';
+
+            const updateSelectedFile = files => {
+                if (!title) return;
+                if (!files || !files.length) {
+                    title.textContent = originalTitle;
+                    return;
+                }
+                title.textContent = files.length === 1
+                    ? files[0].name
+                    : `${files.length} files selected`;
+                if (status) {
+                    status.textContent = files.length === 1
+                        ? `${files[0].name} selected. Click Upload material to save it.`
+                        : `${files.length} files selected. Click Upload material to save one file.`;
+                }
+            };
 
             ['dragenter', 'dragover'].forEach(evt =>
                 zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag-over'); })
@@ -568,18 +601,18 @@
             zone.addEventListener('drop', e => {
                 const files = e.dataTransfer.files;
                 if (files.length) {
-                    // Transfer files to the hidden input
                     const dt = new DataTransfer();
-                    Array.from(files).forEach(f => dt.items.add(f));
+                    dt.items.add(files[0]);
                     input.files = dt.files;
                     input.dispatchEvent(new Event('change', { bubbles: true }));
-                    // Show selected file name in zone
-                    const title = zone.querySelector('.drop-zone-title');
-                    if (title) title.textContent = files.length === 1
-                        ? files[0].name
-                        : `${files.length} files selected`;
                 }
             });
+            zone.addEventListener('keydown', e => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                input.click();
+            });
+            input.addEventListener('change', () => updateSelectedFile(input.files));
         })();
     </script>
 </body>

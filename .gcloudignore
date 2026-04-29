@@ -1,0 +1,37 @@
+# Keep Cloud Build uploads small while allowing OAuth client config files
+# that are required by the deployed Google Docs / Calendar / Tasks flows.
+
+.git
+.DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+ENV/
+node_modules/
+
+.env
+.env.*
+deploy/.deploy.env
+
+token.json
+user_google_tokens/
+ark_learning_agent/user_google_tokens/
+
+learning_agent.db
+*.sqlite
+*.sqlite3
+*.db
+
+.adk/
+ark_learning_agent/.adk/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+!ark_learning_agent/credentials.json
+!auth_function/credentials.json

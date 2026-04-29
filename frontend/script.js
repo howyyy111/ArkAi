@@ -23,6 +23,8 @@ const authPillLabel = document.getElementById("auth-pill-label");
 const profileDropdown = document.getElementById("profile-dropdown");
 const displayEmail = document.getElementById("display-email");
 const headerChangeAccount = document.getElementById("header-change-account");
+const googleSavesStatus = document.getElementById("google-saves-status");
+const connectGoogleSavesButton = document.getElementById("connect-google-saves-button");
 const tutorIdentity = document.getElementById("tutor-identity");
 const stateTitle = document.getElementById("state-title");
 const stateSummary = document.getElementById("state-summary");
@@ -57,6 +59,7 @@ const roadmapSessionDetail = document.getElementById("roadmap-session-detail");
 const roadmapBoard = document.getElementById("roadmap-board");
 const viewRoadmapButton = document.getElementById("view-roadmap-button");
 const deleteRoadmapButton = document.getElementById("delete-roadmap-button");
+const saveRoadmapTasksButton = document.getElementById("save-roadmap-tasks-button");
 const materialFileInput = document.getElementById("material-file");
 const materialTextInput = document.getElementById("material-text");
 const materialQueryInput = document.getElementById("material-query");
@@ -634,6 +637,7 @@ function applySession(session) {
   };
   shouldClearServerSessionOnFirebaseSignOut = !activeSession.isAnonymous;
   syncSessionChrome();
+  refreshGoogleSavesStatus();
   return activeSession;
 }
 
@@ -720,6 +724,113 @@ function syncSessionChrome() {
     authPill.setAttribute("aria-label", label);
     authPill.setAttribute("title", label);
   }
+}
+
+function setGoogleSavesStatus(text, connected = false) {
+  if (googleSavesStatus) {
+    googleSavesStatus.textContent = text;
+  }
+  if (connectGoogleSavesButton) {
+    connectGoogleSavesButton.textContent = connected ? "Reconnect" : "Connect";
+    connectGoogleSavesButton.disabled = Boolean(activeSession.isAnonymous);
+  }
+}
+
+async function refreshGoogleSavesStatus() {
+  if (activeSession.isAnonymous) {
+    setGoogleSavesStatus("Sign in first", false);
+    return { connected: false };
+  }
+  try {
+    const response = await fetch("/api/google/status", { headers: buildAuthHeaders() });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not check Google saves.");
+    }
+    setGoogleSavesStatus(data.connected ? "Connected" : "Not connected", Boolean(data.connected));
+    return data;
+  } catch (error) {
+    setGoogleSavesStatus("Check failed", false);
+    return { connected: false, error: error.message };
+  }
+}
+
+async function connectGoogleSaves({ askFirst = true } = {}) {
+  if (activeSession.isAnonymous) {
+    authHelper.textContent = "Sign in with Google before connecting Docs, Calendar, and Tasks.";
+    openUsernameModal(false);
+    return;
+  }
+  if (askFirst) {
+    const approved = window.confirm(
+      "Allow ArkAI to save your study outputs to Google Docs, Calendar, and Tasks for this signed-in account?"
+    );
+    if (!approved) {
+      setGoogleSavesStatus("Not connected", false);
+      return;
+    }
+  }
+
+  const authWindow = window.open("", "_blank");
+  if (authWindow) {
+    authWindow.document.title = "Connecting Google saves";
+    authWindow.document.body.innerHTML = "<p style=\"font-family: system-ui, sans-serif; padding: 24px;\">Opening Google permission screen...</p>";
+  }
+
+  connectGoogleSavesButton.disabled = true;
+  const oldText = connectGoogleSavesButton.textContent;
+  connectGoogleSavesButton.textContent = "Connecting...";
+  try {
+    const response = await fetch("/api/google/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({}),
+    });
+    const data = await response.json();
+    if (!response.ok || !["success", "auth_required"].includes(data.status)) {
+      throw new Error(data.error || data.message || "Could not connect Google saves.");
+    }
+    if (data.status === "success" && data.connected) {
+      if (authWindow && !authWindow.closed) {
+        authWindow.close();
+      }
+      setGoogleSavesStatus("Connected", true);
+      return;
+    }
+    const authUrl = String(data.authorization_url || "").trim();
+    if (!authUrl) {
+      throw new Error(data.message || "Google authorization link is missing.");
+    }
+    if (authWindow && !authWindow.closed) {
+      authWindow.location.href = authUrl;
+    } else {
+      window.location.assign(authUrl);
+    }
+    setGoogleSavesStatus("Finish in Google", false);
+  } catch (error) {
+    if (authWindow && !authWindow.closed) {
+      authWindow.close();
+    }
+    setGoogleSavesStatus("Not connected", false);
+    authHelper.textContent = error.message;
+  } finally {
+    connectGoogleSavesButton.disabled = false;
+    if (connectGoogleSavesButton.textContent === "Connecting...") {
+      connectGoogleSavesButton.textContent = oldText;
+    }
+  }
+}
+
+function handleGoogleSaveAuthRequired(message, statusNode) {
+  const text = message || "Connect Google saves from the account menu first.";
+  if (statusNode) {
+    statusNode.textContent = text;
+  }
+  setGoogleSavesStatus("Not connected", false);
+  toggleProfileDropdown(true);
 }
 
 function closeProfileDropdown() {
@@ -1180,6 +1291,24 @@ function renderRoadmapSessionDetail(session) {
       <strong>How to use this</strong>
       <p>Open Tutor, learn this topic, do one short exercise, then come back and mark it complete.</p>
     </div>
+    <div class="roadmap-calendar-panel">
+      <label>
+        <span>Calendar time</span>
+        <input type="datetime-local" data-calendar-start />
+      </label>
+      <button
+        class="ghost-button"
+        type="button"
+        data-save-calendar-session="true"
+        data-session-title="${escapeHtml(session.title)}"
+        data-session-focus="${escapeHtml(session.focus || "")}"
+        data-session-duration="${escapeHtml(session.duration_minutes || 45)}"
+        data-phase-title="${escapeHtml(session.phaseTitle || "")}"
+        data-phase-goal="${escapeHtml(session.phaseGoal || "")}"
+      >
+        Save to Google Calendar
+      </button>
+    </div>
     <div class="inline-actions">
       <button
         class="primary-button"
@@ -1216,6 +1345,9 @@ function renderRoadmap(roadmapResult) {
     if (rebuildRoadmapButton) {
       rebuildRoadmapButton.disabled = true;
     }
+    if (saveRoadmapTasksButton) {
+      saveRoadmapTasksButton.disabled = true;
+    }
     renderRoadmapSessionDetail(getActiveSessionDetail());
     roadmapBoard.innerHTML = `<p class="mastery-empty">No roadmap yet.</p>`;
     return;
@@ -1229,6 +1361,9 @@ function renderRoadmap(roadmapResult) {
   }
   if (rebuildRoadmapButton) {
     rebuildRoadmapButton.disabled = false;
+  }
+  if (saveRoadmapTasksButton) {
+    saveRoadmapTasksButton.disabled = false;
   }
 
   const nextRoadmapSession = findNextRoadmapSession(roadmap);
@@ -1723,18 +1858,6 @@ function renderWeeklyReport(report) {
   `;
 }
 
-function renderGoogleDocsAuthMessage(result) {
-  const authUrl = String(result?.authorization_url || "").trim();
-  if (!authUrl) {
-    return "Google Docs sign-in is needed before saving.";
-  }
-  return `
-    Google sign-in is needed before saving.<br />
-    Open this link in Chrome or Safari:<br />
-    <a href="${escapeHtml(authUrl)}" target="_blank" rel="noreferrer">${escapeHtml(authUrl)}</a>
-  `;
-}
-
 async function refreshInsights() {
   const username = getUsername();
   if (!username) {
@@ -1917,8 +2040,9 @@ if (saveAssessmentGoogleDocButton) {
 
     const currentUsername = getUsername();
     if (!currentUsername) {
-        showErrorToast("Please log in to save documents.");
-        return;
+      assessmentStatus.textContent = "Sign in with Google before saving documents.";
+      openUsernameModal(false);
+      return;
     }
 
     saveAssessmentGoogleDocButton.setAttribute("disabled", "disabled");
@@ -1945,10 +2069,8 @@ if (saveAssessmentGoogleDocButton) {
       }
 
       if (data.status === "auth_required") {
-          saveAssessmentGoogleDocButton.removeAttribute("disabled");
-          saveAssessmentGoogleDocButton.textContent = oldText;
-          showErrorToast(`Google Auth required. Please log in.`);
-          return;
+        handleGoogleSaveAuthRequired(data.message, assessmentStatus);
+        return;
       }
 
       assessmentStatus.textContent = "Mock test saved to Google Docs!";
@@ -1956,7 +2078,7 @@ if (saveAssessmentGoogleDocButton) {
           assessmentStatus.textContent = "";
       }, 5000);
     } catch (err) {
-      showErrorToast(err.message);
+      assessmentStatus.textContent = err.message;
     } finally {
       saveAssessmentGoogleDocButton.removeAttribute("disabled");
       saveAssessmentGoogleDocButton.textContent = oldText;
@@ -2008,21 +2130,6 @@ function buildMessageBody(body) {
       anchor.className = "message-link";
     });
 
-    container.querySelectorAll("pre").forEach((pre) => {
-      const raw = String(pre.textContent || "").trim();
-      if (!/^https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?/.test(raw)) {
-        return;
-      }
-      const wrapper = document.createElement("p");
-      const anchor = document.createElement("a");
-      anchor.href = raw;
-      anchor.target = "_blank";
-      anchor.rel = "noreferrer";
-      anchor.className = "message-link";
-      anchor.textContent = "Open Google Sign-In";
-      wrapper.appendChild(anchor);
-      pre.replaceWith(wrapper);
-    });
   } else {
     const p = document.createElement("p");
     p.textContent = body;
@@ -2254,6 +2361,118 @@ async function deleteCurrentRoadmap() {
   await refreshInsights();
 }
 
+function buildCalendarTimes(startValue, durationMinutes = 45) {
+  if (!startValue) {
+    return null;
+  }
+  const start = new Date(startValue);
+  if (Number.isNaN(start.getTime())) {
+    return null;
+  }
+  const minutes = Number(durationMinutes) || 45;
+  const end = new Date(start.getTime() + minutes * 60 * 1000);
+  return {
+    startTime: start.toISOString(),
+    endTime: end.toISOString(),
+  };
+}
+
+async function saveRoadmapToGoogleTasks() {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+  if (!activeRoadmap) {
+    roadmapStatus.textContent = "Create a roadmap first.";
+    return;
+  }
+
+  saveRoadmapTasksButton.disabled = true;
+  const oldText = saveRoadmapTasksButton.textContent;
+  saveRoadmapTasksButton.textContent = "Saving...";
+  roadmapStatus.textContent = "Saving roadmap sessions to Google Tasks...";
+  try {
+    const response = await fetch("/api/roadmap/save-google-tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !["success", "auth_required"].includes(data.status)) {
+      throw new Error(data.error || data.message || "Could not save roadmap tasks.");
+    }
+    if (data.status === "auth_required") {
+      handleGoogleSaveAuthRequired(data.message, roadmapStatus);
+      return;
+    }
+    roadmapStatus.textContent = data.message || "Roadmap saved to Google Tasks.";
+  } catch (error) {
+    roadmapStatus.textContent = error.message;
+  } finally {
+    saveRoadmapTasksButton.disabled = false;
+    saveRoadmapTasksButton.textContent = oldText;
+  }
+}
+
+async function saveRoadmapSessionToCalendar(button) {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+  const panel = button.closest(".roadmap-calendar-panel");
+  const startInput = panel?.querySelector("[data-calendar-start]");
+  const times = buildCalendarTimes(startInput?.value, button.dataset.sessionDuration);
+  if (!times) {
+    roadmapStatus.textContent = "Choose a date and time first.";
+    startInput?.focus();
+    return;
+  }
+
+  button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Saving...";
+  roadmapStatus.textContent = "Saving study session to Google Calendar...";
+  try {
+    const response = await fetch("/api/roadmap/session/save-calendar", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        title: button.dataset.sessionTitle || "Roadmap study session",
+        focus: button.dataset.sessionFocus || "",
+        phaseTitle: button.dataset.phaseTitle || "",
+        phaseGoal: button.dataset.phaseGoal || "",
+        startTime: times.startTime,
+        endTime: times.endTime,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !["success", "auth_required"].includes(data.status)) {
+      throw new Error(data.error || data.message || "Could not save calendar event.");
+    }
+    if (data.status === "auth_required") {
+      handleGoogleSaveAuthRequired(data.message, roadmapStatus);
+      return;
+    }
+    roadmapStatus.textContent = data.message || "Study session saved to Google Calendar.";
+  } catch (error) {
+    roadmapStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
 async function readFileAsDataUrl(file) {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2421,7 +2640,15 @@ googleSigninButton.addEventListener("click", async () => {
   }
 
   try {
-    await signInWithPopup(firebaseAuthClient, googleProvider);
+    const result = await signInWithPopup(firebaseAuthClient, googleProvider);
+    if (result?.user) {
+      const idToken = await result.user.getIdToken();
+      await createServerSession(idToken);
+      closeUsernameModal();
+      updateAuthPill(result.user.email || activeSession.displayName || "Signed in", false);
+      await refreshGoogleSavesStatus();
+      await connectGoogleSaves({ askFirst: true });
+    }
     promptInput.focus();
   } catch (error) {
     authHelper.textContent = `Google Sign-In failed: ${error.message}`;
@@ -2574,9 +2801,7 @@ reportBoard.addEventListener("click", async (event) => {
     }
 
     if (data.status === "auth_required") {
-      if (statusNode) {
-        statusNode.innerHTML = renderGoogleDocsAuthMessage(data);
-      }
+      handleGoogleSaveAuthRequired(data.message, statusNode);
       return;
     }
 
@@ -2648,6 +2873,10 @@ uploadMaterialButton.addEventListener("click", async () => {
     materialsStatus.textContent = `${data.material.name} is ready.`;
     materialFileInput.value = "";
     materialTextInput.value = "";
+    const dropZoneTitle = document.querySelector("#drop-zone .drop-zone-title");
+    if (dropZoneTitle) {
+      dropZoneTitle.textContent = "Drop file or browse";
+    }
     await refreshMaterials();
     await refreshInsights();
   } catch (error) {
@@ -2758,8 +2987,9 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
     diagnosticForm.classList.remove("hidden");
     updateAssessmentActions();
     diagnosticTopicInput.value = data.topic || diagnosticTopicInput.value;
-    assessmentStatus.textContent = "Mock test ready from your materials.";
-    materialsStatus.textContent = "Mock test opened in Plan.";
+    showPlanWorkspace("diagnostic");
+    assessmentStatus.textContent = "Mock test ready from your materials. You can submit it or save it to Google Docs.";
+    materialsStatus.textContent = "Mock test ready in Plan.";
     materialsMockStyleFileInput.value = "";
     setActiveView("plan");
   } catch (error) {
@@ -2964,6 +3194,12 @@ roadmapBoard.addEventListener("keydown", (event) => {
 });
 
 roadmapSessionDetail.addEventListener("click", (event) => {
+  const calendarButton = event.target.closest("[data-save-calendar-session]");
+  if (calendarButton) {
+    saveRoadmapSessionToCalendar(calendarButton);
+    return;
+  }
+
   const openButton = event.target.closest("[data-open-session]");
   if (!openButton) {
     return;
@@ -2976,6 +3212,14 @@ roadmapSessionDetail.addEventListener("click", (event) => {
     phaseTitle: openButton.dataset.phaseTitle,
     phaseGoal: openButton.dataset.phaseGoal,
   });
+});
+
+saveRoadmapTasksButton?.addEventListener("click", () => {
+  saveRoadmapToGoogleTasks();
+});
+
+connectGoogleSavesButton?.addEventListener("click", () => {
+  connectGoogleSaves({ askFirst: true });
 });
 
 materialsLibrary.addEventListener("change", (event) => {

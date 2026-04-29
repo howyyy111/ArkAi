@@ -71,11 +71,11 @@ def _production_https_redirect_uri_from_secrets(path: Path) -> str | None:
 
 def _callback_redirect_uri(request):
     """Must exactly match redirect_uri from the authorize request (see AUTH_CALLBACK_URL / credentials.json)."""
+    from_file = _production_https_redirect_uri_from_secrets(_SECRETS_PATH)
     for key in ("OAUTH_REDIRECT_URI", "AUTH_CALLBACK_URL"):
         u = (os.environ.get(key) or "").strip()
-        if u:
+        if u and (not from_file or u == from_file):
             return u
-    from_file = _production_https_redirect_uri_from_secrets(_SECRETS_PATH)
     if from_file:
         return from_file
     merged = f"https://{request.host}{request.path}"
@@ -94,6 +94,30 @@ def _user_google_oauth_doc(user_id: str):
         .document("google_oauth")
     )
 
+def _resolve_oauth_state_user_id(state: str) -> str:
+    normalized_state = str(state or "").strip()
+    if not normalized_state:
+        return ""
+
+    state_doc = db.collection("google_oauth_states").document(normalized_state)
+    snapshot = state_doc.get()
+    if snapshot.exists:
+        payload = snapshot.to_dict() or {}
+        user_id = _normalize_oauth_user_id(payload.get("user_id", ""))
+        if user_id:
+            state_doc.set(
+                {
+                    "status": "used",
+                    "used_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+            return user_id
+
+    if os.environ.get("ALLOW_LEGACY_OAUTH_STATE") == "1":
+        return _normalize_oauth_user_id(normalized_state)
+    return ""
+
 
 @functions_framework.http
 def auth_callback(request):
@@ -107,9 +131,9 @@ def auth_callback(request):
     if not code or not state:
         return "Missing 'code' or 'state' parameters from Google.", 400
         
-    username = _normalize_oauth_user_id(state)
+    username = _resolve_oauth_state_user_id(state)
     if not username:
-        return "Missing OAuth state user identity.", 400
+        return "Invalid or expired OAuth state. Return to ArkAI and connect Google saves again.", 400
 
     redirect_uri = _callback_redirect_uri(request)
 

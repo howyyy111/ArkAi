@@ -245,9 +245,8 @@ teaching_agent = Agent(
 
         Auth handling:
         - If a tool returns `auth_required`, follow the tool message
-        - Show the authorization URL as a clickable markdown link
-        - Format it like: [Open Google Sign-In](authorization_url)
-        - Also include the raw URL below for fallback copy-paste
+        - Do not show a Google sign-in URL inside tutor chat
+        - Tell the user to connect Google saves from the account menu / switch account flow first
         - Keep the explanation short, clear, and user-friendly
         - Avoid unnecessary technical jargon unless the user asks
 
@@ -420,9 +419,8 @@ roadmap_agent = Agent(
         - When a roadmap spans multiple days, create dated tasks only after the start date is confirmed
 
         Auth handling:
-        - If a tool returns `auth_required`, show the authorization URL as a clickable markdown link
-        - Format it like: [Open Google Sign-In](authorization_url)
-        - Also include the raw URL below for fallback copy-paste
+        - If a tool returns `auth_required`, tell the user to connect Google saves from the account menu / switch account flow first
+        - Do not show a Google sign-in URL inside tutor chat
         - Keep the explanation simple and user-friendly
         - Do not give deep technical explanation unless the user asks
 
@@ -683,9 +681,8 @@ root_agent = Agent(
 
         Auth handling:
         - If a tool returns `auth_required`:
-        - Show the authorization URL as a clickable markdown link
-        - Format it like: [Open Google Sign-In](authorization_url)
-        - Also include the raw URL below for fallback copy-paste
+        - Tell the user to connect Google saves from the account menu / switch account flow first
+        - Do not show a Google sign-in URL inside tutor chat
         - Give a short, simple instruction
         - Let the user retry after authorization
         - If OAuth fails, such as invalid_client:

@@ -738,6 +738,26 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, get_evaluation_snapshot(context["user_id"]))
             return
+        elif self.path.startswith("/api/google/status"):
+            try:
+                context = self._resolve_request_context()
+            except PermissionError as exc:
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return
+            if context["is_anonymous"]:
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "success",
+                        "connected": False,
+                        "message": "Sign in with Google to connect saves.",
+                    },
+                )
+                return
+            from ark_learning_agent.productivity_mcp_server import google_oauth_status
+
+            self._write_json(HTTPStatus.OK, google_oauth_status(context["user_id"]))
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -745,6 +765,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             "/api/session",
             "/api/auth/session",
             "/api/auth/logout",
+            "/api/google/connect",
             "/api/chat",
             "/api/chat/delete",
             "/api/chat/delete-all",
@@ -753,6 +774,8 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             "/api/roadmap/generate",
             "/api/roadmap/delete",
             "/api/roadmap/session/update",
+            "/api/roadmap/save-google-tasks",
+            "/api/roadmap/session/save-calendar",
             "/api/materials/upload",
             "/api/materials/tutor",
             "/api/materials/mock-test",
@@ -827,6 +850,24 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                     "isAnonymous": context["is_anonymous"],
                 },
             )
+            return
+
+        if self.path == "/api/google/connect":
+            context = self._resolve_request_context(payload)
+            if context["is_anonymous"]:
+                self._write_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "status": "error",
+                        "message": "Sign in with Google before connecting Docs, Calendar, and Tasks.",
+                    },
+                )
+                return
+            from ark_learning_agent.productivity_mcp_server import get_google_authorization_url
+
+            result = get_google_authorization_url(context["user_id"])
+            status = HTTPStatus.OK if result.get("status") in {"success", "auth_required"} else HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
             return
 
         try:
@@ -931,6 +972,72 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             self._write_json(status, result)
             return
 
+        if self.path == "/api/roadmap/save-google-tasks":
+            from ark_learning_agent.productivity_mcp_server import create_roadmap_tasks, google_oauth_status
+
+            oauth_status = google_oauth_status(user_id)
+            if not oauth_status.get("connected"):
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "auth_required",
+                        "message": "Connect Google saves from the account menu before saving roadmap tasks.",
+                    },
+                )
+                return
+
+            result = create_roadmap_tasks(user_id=user_id, include_due_dates=False)
+            if result.get("status") in {"success", "auth_required"}:
+                status = HTTPStatus.OK
+            else:
+                status = HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
+        if self.path == "/api/roadmap/session/save-calendar":
+            from ark_learning_agent.productivity_mcp_server import create_calendar_event, google_oauth_status
+
+            oauth_status = google_oauth_status(user_id)
+            if not oauth_status.get("connected"):
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "auth_required",
+                        "message": "Connect Google saves from the account menu before saving calendar events.",
+                    },
+                )
+                return
+
+            title = str(payload.get("title", "")).strip() or "Roadmap study session"
+            focus = str(payload.get("focus", "")).strip()
+            phase_title = str(payload.get("phaseTitle", "")).strip()
+            phase_goal = str(payload.get("phaseGoal", "")).strip()
+            start_time = str(payload.get("startTime", "")).strip()
+            end_time = str(payload.get("endTime", "")).strip()
+            if not start_time or not end_time:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Choose a start time first."})
+                return
+
+            description_parts = [
+                f"Focus: {focus}" if focus else "",
+                f"Phase: {phase_title}" if phase_title else "",
+                phase_goal,
+                "Created from ArkAI roadmap.",
+            ]
+            result = create_calendar_event(
+                user_id=user_id,
+                event_title=f"Study: {title}",
+                start_time_iso=start_time,
+                end_time_iso=end_time,
+                description="\n".join(part for part in description_parts if part),
+            )
+            if result.get("status") in {"success", "auth_required"}:
+                status = HTTPStatus.OK
+            else:
+                status = HTTPStatus.BAD_REQUEST
+            self._write_json(status, result)
+            return
+
         if self.path == "/api/materials/upload":
             app_metrics["materials_uploaded"] += 1
             result = save_learning_material(
@@ -1009,7 +1116,18 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/report/save-google-doc":
             app_metrics["reports_saved_to_docs"] += 1
-            from ark_learning_agent.productivity_mcp_server import save_weekly_report_doc
+            from ark_learning_agent.productivity_mcp_server import google_oauth_status, save_weekly_report_doc
+
+            oauth_status = google_oauth_status(user_id)
+            if not oauth_status.get("connected"):
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "auth_required",
+                        "message": "Connect Google saves from the account menu before saving reports.",
+                    },
+                )
+                return
 
             result = save_weekly_report_doc(
                 user_id=user_id,
@@ -1023,7 +1141,18 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/assessment/save-google-doc":
-            from ark_learning_agent.productivity_mcp_server import save_assessment_doc
+            from ark_learning_agent.productivity_mcp_server import google_oauth_status, save_assessment_doc
+
+            oauth_status = google_oauth_status(user_id)
+            if not oauth_status.get("connected"):
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "auth_required",
+                        "message": "Connect Google saves from the account menu before saving assessments.",
+                    },
+                )
+                return
 
             result = save_assessment_doc(
                 user_id=user_id,
