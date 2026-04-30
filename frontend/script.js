@@ -65,6 +65,8 @@ const roadmapTimeInput = document.getElementById("roadmap-time");
 const roadmapTimeUnitSelect = document.getElementById("roadmap-time-unit");
 const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
 const roadmapStartDateInput = document.getElementById("roadmap-start-date");
+const roadmapCalendarSyncInput = document.getElementById("roadmap-calendar-sync");
+const roadmapCalendarStartTimeInput = document.getElementById("roadmap-calendar-start-time");
 const roadmapLevelSelect = document.getElementById("roadmap-level");
 const roadmapHomeStatus = document.getElementById("roadmap-home-status");
 const roadmapStatus = document.getElementById("roadmap-status");
@@ -177,6 +179,25 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+async function parseApiResponse(response) {
+  const rawText = await response.text();
+  if (!rawText) {
+    return {};
+  }
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return {
+      status: "error",
+      message: rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "Server returned an unreadable response.",
+    };
+  }
+}
+
+function isLocalDevelopmentHost() {
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
 function normalizePdfText(value) {
@@ -986,7 +1007,7 @@ async function refreshGoogleSavesStatus() {
   }
   try {
     const response = await fetch("/api/google/status", { headers: buildAuthHeaders() });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || data.status !== "success") {
       throw new Error(data.error || data.message || "Could not check Google saves.");
     }
@@ -1041,7 +1062,7 @@ async function connectGoogleSavesWithAccessToken(accessToken, { expiresIn = null
       expiresIn,
     }),
   });
-  const data = await response.json();
+  const data = await parseApiResponse(response);
   if (!response.ok || data.status !== "success") {
     throw new Error(data.error || data.message || "Could not connect Google saves.");
   }
@@ -1106,7 +1127,7 @@ async function connectGoogleSaves({ askFirst = true, forceReconnect = false } = 
     }
   }
 
-  if (!hostedGoogleOauthReady && firebaseAuthClient && googleSavesProvider) {
+  if ((isLocalDevelopmentHost() || !hostedGoogleOauthReady) && firebaseAuthClient && googleSavesProvider) {
     try {
       await connectGoogleSavesWithFirebasePopup({ askFirst: false });
       return;
@@ -1133,7 +1154,7 @@ async function connectGoogleSaves({ askFirst = true, forceReconnect = false } = 
       },
       body: JSON.stringify({ forceReconnect }),
     });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || !["success", "auth_required"].includes(data.status)) {
       if (String(data.message || "").includes("credentials.json") || String(data.message || "").includes("AUTH_CALLBACK_URL")) {
         await connectGoogleSavesWithFirebasePopup({ askFirst: false });
@@ -1649,15 +1670,16 @@ function renderRoadmapReadOnlyDetails(roadmap) {
           </div>
         </div>
         <div class="saved-roadmap-sessions">
-          ${(phase.sessions || []).map((session) => `
-            <article class="saved-roadmap-session" data-session-status="${escapeHtml(normalizeRoadmapStatus(session.status))}">
+          ${(phase.sessions || []).map((session) => {
+            const status = normalizeRoadmapStatus(session.status);
+            return `
+            <article class="saved-roadmap-session" data-session-status="${escapeHtml(status)}">
               <div>
                 <strong>${escapeHtml(session.title || "Study session")}</strong>
                 <p>${escapeHtml(session.focus || roadmapDisplayTitle(roadmap))} • ${escapeHtml(session.duration_minutes || 45)} min</p>
-                ${session.due_date ? `<span>Due ${escapeHtml(session.due_date)}</span>` : ""}
+                <p class="roadmap-session-status">${escapeHtml(session.status || "planned")}</p>
               </div>
               <div class="saved-roadmap-session-actions">
-                <span class="status-pill status-${escapeHtml(normalizeRoadmapStatus(session.status))}">${escapeHtml(session.status || "planned")}</span>
                 <button
                   class="mini-button"
                   type="button"
@@ -1670,24 +1692,12 @@ function renderRoadmapReadOnlyDetails(roadmap) {
                 >
                   Open in Tutor
                 </button>
-                <button class="mini-button${normalizeRoadmapStatus(session.status) === "completed" ? " is-active-status" : ""}" type="button" data-saved-session-status="completed" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Complete</button>
-                <button class="mini-button${normalizeRoadmapStatus(session.status) === "planned" ? " is-active-status" : ""}" type="button" data-saved-session-status="planned" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Need to do</button>
-                <button
-                  class="mini-button"
-                  type="button"
-                  data-remind-saved-session="true"
-                  data-session-title="${escapeHtml(session.title || "Study session")}"
-                  data-session-focus="${escapeHtml(session.focus || "")}"
-                  data-session-duration="${escapeHtml(session.duration_minutes || 45)}"
-                  data-session-due="${escapeHtml(session.due_date || "")}"
-                  data-phase-title="${escapeHtml(phase.title || "")}"
-                  data-phase-goal="${escapeHtml(phase.goal || "")}"
-                >
-                  Remind me
-                </button>
+                <button class="mini-button${status === "completed" ? " is-active-status" : ""}" type="button" data-saved-session-status="completed" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Complete</button>
+                <button class="mini-button${status === "missed" ? " is-active-status" : ""}" type="button" data-saved-session-status="missed" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Missed</button>
               </div>
             </article>
-          `).join("")}
+          `;
+          }).join("")}
         </div>
       </section>
     `)
@@ -1706,7 +1716,11 @@ function renderSavedRoadmapDetail(item) {
   savedRoadmapsList.innerHTML = `
     <article class="saved-roadmap-detail-page">
       <div class="saved-roadmap-detail-hero">
-        <button class="ghost-button mini-button" type="button" data-back-to-saved-roadmaps="true">Back</button>
+        <button class="ghost-button mini-button icon-only-button" type="button" data-back-to-saved-roadmaps="true" aria-label="Back to saved roadmaps" title="Back to saved roadmaps">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m15 18-6-6 6-6"></path>
+          </svg>
+        </button>
         <div>
           <p class="section-label">Saved roadmap</p>
           <h4>${escapeHtml(title)} roadmap</h4>
@@ -3151,7 +3165,7 @@ async function createServerSession(idToken) {
     },
     body: JSON.stringify({ idToken }),
   });
-  const data = await response.json();
+  const data = await parseApiResponse(response);
   if (!response.ok || data.status !== "success") {
     throw new Error(data.error || "Could not create a secure sign-in session.");
   }
@@ -3170,7 +3184,7 @@ async function logoutServerSession() {
       },
       body: JSON.stringify({ resetIdentity: true, resetSession: true }),
     });
-    const data = await response.json();
+    const data = await parseApiResponse(response);
     if (!response.ok || data.status !== "success") {
       throw new Error(data.error || "Could not end the secure sign-in session.");
     }
@@ -3296,6 +3310,9 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
         || getTimeInMinutes(diagnosticTimeInput, diagnosticTimeUnitSelect),
       deadlineDays: roadmapDeadlineInput.value ? Number(roadmapDeadlineInput.value) : 14,
       startDate: roadmapStartDateInput?.value || "",
+      saveToCalendar: Boolean(roadmapCalendarSyncInput?.checked),
+      calendarStartTime: roadmapCalendarStartTimeInput?.value || "09:00",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       level: roadmapLevelSelect?.value || diagnosticLevelSelect.value,
       forceRebuild,
       revisionReason,
@@ -3308,9 +3325,12 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
   currentRoadmapDetailsExpanded = false;
   renderRoadmap(data);
   await refreshSavedRoadmaps();
-  roadmapStatus.textContent = "Current roadmap ready.";
+  roadmapStatus.textContent = data.calendar?.message || "Current roadmap ready.";
+  if (data.calendar?.status === "auth_required") {
+    handleGoogleSaveAuthRequired(data.calendar.message, roadmapStatus);
+  }
   if (roadmapHomeStatus) {
-    roadmapHomeStatus.textContent = "Roadmap ready. Use View roadmap anytime.";
+    roadmapHomeStatus.textContent = data.calendar?.message || "Roadmap ready. Use View roadmap anytime.";
   }
   await refreshLearnerState();
   await refreshInsights();
@@ -3370,6 +3390,25 @@ function buildCalendarTimes(startValue, durationMinutes = 45) {
     startTime: start.toISOString(),
     endTime: end.toISOString(),
   };
+}
+
+function todayDateInputValue() {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
+function setupRoadmapDateControls() {
+  if (roadmapStartDateInput) {
+    const today = todayDateInputValue();
+    roadmapStartDateInput.min = today;
+    if (!roadmapStartDateInput.value) {
+      roadmapStartDateInput.value = today;
+    }
+  }
+  if (roadmapCalendarStartTimeInput && !roadmapCalendarStartTimeInput.value) {
+    roadmapCalendarStartTimeInput.value = "09:00";
+  }
 }
 
 async function saveRoadmapToGoogleTasks() {
@@ -4618,6 +4657,7 @@ focusTabs.forEach((tab) => {
 
 setupTimeControl(diagnosticTimeInput, diagnosticTimeUnitSelect);
 setupTimeControl(roadmapTimeInput, roadmapTimeUnitSelect);
+setupRoadmapDateControls();
 
 if (voiceInputButton) {
   voiceInputButton.addEventListener("click", () => {

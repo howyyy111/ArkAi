@@ -9,6 +9,7 @@ os.environ.pop("K_SERVICE", None)
 
 import frontend_server
 from ark_learning_agent.firestore_session_service import FirestoreSessionService
+from ark_learning_agent import frontend_api
 from ark_learning_agent import productivity_mcp_server
 from ark_learning_agent import web_session_store
 from google.adk.sessions import Session
@@ -352,6 +353,57 @@ class FrontendServerTests(unittest.TestCase):
         self.assertIn("ArkAI Tutor study session.", calendar_description)
         self.assertLessEqual(len(calendar_description), 1700)
         self.assertNotIn("save in google calendar", calendar_description.lower())
+
+    def test_roadmap_calendar_sync_uses_session_due_dates(self):
+        roadmap = {
+            "phases": [
+                {
+                    "title": "Foundation 1",
+                    "goal": "Practice loops",
+                    "sessions": [
+                        {
+                            "title": "Loops session 1",
+                            "focus": "for loops",
+                            "duration_minutes": 45,
+                            "status": "planned",
+                            "due_date": "2026-05-03",
+                        },
+                        {
+                            "title": "Loops session 2",
+                            "focus": "while loops",
+                            "duration_minutes": 30,
+                            "status": "completed",
+                            "due_date": "2026-05-04",
+                        },
+                    ],
+                }
+            ]
+        }
+
+        async def run_sync():
+            with mock.patch(
+                "ark_learning_agent.productivity_mcp_server.google_oauth_status",
+                return_value={"connected": True},
+            ), mock.patch(
+                "ark_learning_agent.productivity_mcp_server.create_calendar_event",
+                return_value={"status": "success", "message": "ok"},
+            ) as create_event:
+                result = await frontend_api._save_roadmap_result_to_google_calendar(
+                    user_id="learner@example.com",
+                    roadmap=roadmap,
+                    timezone_name="Asia/Bangkok",
+                    calendar_start_time="10:15",
+                )
+                return result, create_event
+
+        result, create_event = __import__("asyncio").run(run_sync())
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_sessions"], ["Loops session 1"])
+        create_event.assert_called_once()
+        kwargs = create_event.call_args.kwargs
+        self.assertEqual(kwargs["start_time_iso"], "2026-05-03T10:15:00+07:00")
+        self.assertEqual(kwargs["end_time_iso"], "2026-05-03T11:00:00+07:00")
 
 
 if __name__ == "__main__":

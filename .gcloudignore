@@ -20,6 +20,7 @@ deploy/.deploy.env
 token.json
 user_google_tokens/
 ark_learning_agent/user_google_tokens/
+ark_learning_agent/learner_uploads/
 
 learning_agent.db
 *.sqlite

@@ -1050,12 +1050,14 @@ textarea:disabled {
 }
 
 .assessment-grid label,
+.assessment-grid .roadmap-calendar-field,
 .diagnostic-question {
     display: grid;
     gap: 8px;
 }
 
-.assessment-grid span,
+.assessment-grid > label > span,
+.assessment-grid > .roadmap-calendar-field > span,
 .diagnostic-question h5 {
     font-size: 0.92rem;
     font-weight: 600;
@@ -1583,12 +1585,14 @@ textarea:focus {
 .saved-roadmap-item {
     position: relative;
     display: grid;
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px 16px;
     border: 1px solid rgba(28, 28, 28, 0.08);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.66);
-    padding: 14px 76px 14px 16px;
-    min-height: 132px;
+    padding: 14px 16px;
+    min-height: 118px;
 }
 
 .saved-roadmap-overview strong,
@@ -1623,39 +1627,36 @@ textarea:focus {
     gap: 4px;
     min-width: 190px;
     text-align: right;
-    padding-right: 34px;
+    padding-right: 0;
 }
 
 .saved-roadmap-actions {
-    position: absolute;
-    right: 16px;
-    bottom: 14px;
+    position: static;
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
     gap: 8px;
     justify-content: flex-end;
 }
 
 .saved-roadmap-delete-icon {
-    position: absolute;
-    top: 14px;
-    right: 16px;
+    position: static;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 38px;
     height: 38px;
-    border: 1px solid rgba(210, 65, 65, 0.18);
-    border-radius: 10px;
-    background: rgba(255, 247, 247, 0.92);
-    color: #b42318;
+    border: 1px solid rgba(28, 28, 28, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.58);
+    color: var(--text);
     cursor: pointer;
     transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
 .saved-roadmap-delete-icon:hover {
-    background: #fff1f1;
-    border-color: rgba(210, 65, 65, 0.32);
+    background: rgba(255, 255, 255, 0.84);
+    border-color: rgba(28, 28, 28, 0.16);
     transform: translateY(-1px);
 }
 
@@ -1782,17 +1783,22 @@ textarea:focus {
 .saved-roadmap-session {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: 14px;
     align-items: center;
     border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 12px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.86);
-    padding: 12px;
+    padding: 15px 16px;
 }
 
 .saved-roadmap-session[data-session-status="completed"] {
-    border-color: rgba(31, 122, 79, 0.22);
-    background: rgba(242, 250, 246, 0.94);
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+.saved-roadmap-session[data-session-status="missed"] {
+    background: #fef2f2;
+    border-color: #fecaca;
 }
 
 .saved-roadmap-session strong {
@@ -1804,8 +1810,29 @@ textarea:focus {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 8px;
+}
+
+.saved-roadmap-session .roadmap-session-status {
+    width: fit-content;
+    margin: 8px 0 0;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.05);
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.saved-roadmap-session[data-session-status="completed"] .roadmap-session-status {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.saved-roadmap-session[data-session-status="missed"] .roadmap-session-status {
+    background: #fee2e2;
+    color: #991b1b;
 }
 
 #roadmap-workspace .roadmap-detail-head {
@@ -2626,15 +2653,29 @@ textarea:focus {
     color: #991b1b;
 }
 
+.mini-button[data-saved-session-status="completed"] {
+    background: rgba(72, 116, 79, 0.12);
+    color: #166534;
+}
+
+.mini-button[data-saved-session-status="missed"] {
+    background: rgba(158, 74, 55, 0.12);
+    color: #991b1b;
+}
+
 .mini-button.is-active-status[data-status="completed"],
-.mini-button.is-active-status[data-status="completed"]:hover {
+.mini-button.is-active-status[data-status="completed"]:hover,
+.mini-button.is-active-status[data-saved-session-status="completed"],
+.mini-button.is-active-status[data-saved-session-status="completed"]:hover {
     background: #dcfce7;
     border-color: #86efac;
     color: #166534;
 }
 
 .mini-button.is-active-status[data-status="missed"],
-.mini-button.is-active-status[data-status="missed"]:hover {
+.mini-button.is-active-status[data-status="missed"]:hover,
+.mini-button.is-active-status[data-saved-session-status="missed"],
+.mini-button.is-active-status[data-saved-session-status="missed"]:hover {
     background: #fee2e2;
     border-color: #fca5a5;
     color: #991b1b;
@@ -5602,9 +5643,59 @@ code,
     padding-inline: 10px !important;
 }
 
+.roadmap-calendar-sync-field {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) 144px;
+    gap: 10px;
+    align-items: center;
+    max-width: 560px;
+}
+
+.roadmap-calendar-sync-toggle {
+    display: flex !important;
+    align-items: center;
+    gap: 10px !important;
+    min-height: 48px;
+    padding: 12px 16px;
+    border: 1px solid rgba(28, 28, 28, 0.06);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.72);
+    min-width: 0;
+}
+
+.roadmap-calendar-sync-toggle input {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    accent-color: var(--accent-strong, var(--accent));
+}
+
+.roadmap-calendar-sync-toggle span {
+    color: var(--ink) !important;
+    font-size: 0.88rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0 !important;
+    line-height: 1.25 !important;
+}
+
+.roadmap-calendar-field {
+    grid-column: 1 / -1;
+}
+
+.roadmap-calendar-field input[type="time"] {
+    min-width: 144px;
+    min-height: 48px;
+    padding-inline: 13px;
+}
+
 @media (max-width: 700px) {
     .focus-view[data-view="plan"] #plan-home {
         gap: 10px !important;
+    }
+
+    .roadmap-calendar-sync-field {
+        grid-template-columns: 1fr;
+        max-width: none;
     }
 }
 
@@ -7535,11 +7626,12 @@ body.sidebar-collapsed .sidebar-bottom {
     .saved-roadmap-meta {
         min-width: 0;
         text-align: left;
-        padding-right: 46px;
+        padding-right: 0;
     }
 
     .saved-roadmap-actions {
         position: static;
+        flex-wrap: wrap;
         justify-content: flex-start;
         padding-top: 4px;
     }
@@ -7549,6 +7641,7 @@ body.sidebar-collapsed .sidebar-bottom {
     }
 
     .saved-roadmap-session-actions {
+        flex-wrap: wrap;
         justify-content: flex-start;
     }
 

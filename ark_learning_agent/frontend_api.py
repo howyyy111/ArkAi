@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import logging
 import json
 import os
@@ -811,6 +811,73 @@ async def _save_roadmap_sessions_to_google_calendar(user_id: str, message: str, 
         "created_sessions": created,
     }
 
+def _parse_calendar_start_time(value: str) -> time:
+    raw_value = str(value or "").strip()
+    try:
+        hour_text, minute_text = raw_value.split(":", 1)
+        hour = max(0, min(23, int(hour_text)))
+        minute = max(0, min(59, int(minute_text[:2])))
+        return time(hour=hour, minute=minute)
+    except (TypeError, ValueError):
+        return time(hour=9, minute=0)
+
+async def _save_roadmap_result_to_google_calendar(
+    user_id: str,
+    roadmap: dict[str, Any],
+    timezone_name: str,
+    calendar_start_time: str,
+) -> dict[str, Any]:
+    from .productivity_mcp_server import create_calendar_event, google_oauth_status
+
+    oauth_status = await asyncio.to_thread(google_oauth_status, user_id)
+    if not oauth_status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": "Connect Google saves from the account menu before ArkAI adds roadmap sessions to Google Calendar.",
+        }
+
+    try:
+        calendar_tz = zoneinfo.ZoneInfo(timezone_name or "UTC")
+    except zoneinfo.ZoneInfoNotFoundError:
+        calendar_tz = zoneinfo.ZoneInfo("UTC")
+    start_clock = _parse_calendar_start_time(calendar_start_time)
+
+    created: list[str] = []
+    for phase in roadmap.get("phases", []):
+        for session in phase.get("sessions", []):
+            if session.get("status") == "completed":
+                continue
+            due_date = str(session.get("due_date") or "").strip()
+            try:
+                start_day = datetime.fromisoformat(due_date).date()
+            except ValueError:
+                continue
+            start = datetime.combine(start_day, start_clock, tzinfo=calendar_tz)
+            duration = max(15, min(240, int(session.get("duration_minutes") or 45)))
+            end = start + timedelta(minutes=duration)
+            description_parts = [
+                f"Focus: {session.get('focus')}" if session.get("focus") else "",
+                f"Phase: {phase.get('title')}" if phase.get("title") else "",
+                str(phase.get("goal") or "").strip(),
+                "Created from ArkAI roadmap.",
+            ]
+            result = await asyncio.to_thread(create_calendar_event,
+                user_id=user_id,
+                event_title=f"Study: {session.get('title') or 'Roadmap study session'}",
+                start_time_iso=start.isoformat(),
+                end_time_iso=end.isoformat(),
+                description="\n".join(part for part in description_parts if part),
+            )
+            if result.get("status") != "success":
+                return result
+            created.append(str(session.get("title") or "Study session"))
+
+    return {
+        "status": "success",
+        "message": f"Added {len(created)} roadmap session(s) to Google Calendar.",
+        "created_sessions": created,
+    }
+
 def _build_agent_message(
     user_id: str,
     message: str,
@@ -1381,11 +1448,26 @@ async def api_auth_session(request: Request, response: Response, payload: ApiReq
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail={"error": "Missing Firebase ID token."})
     try:
         user_id = await asyncio.to_thread(_verify_firebase_id_token_email, id_token)
-        session_cookie = await asyncio.to_thread(_create_firebase_session_cookie, id_token)
-        _set_cookie(response, FIREBASE_SESSION_COOKIE_NAME, session_cookie, max_age=FIREBASE_SESSION_MAX_AGE_SECONDS, request=request)
+        try:
+            session_cookie = await asyncio.to_thread(_create_firebase_session_cookie, id_token)
+            _set_cookie(
+                response,
+                FIREBASE_SESSION_COOKIE_NAME,
+                session_cookie,
+                max_age=FIREBASE_SESSION_MAX_AGE_SECONDS,
+                request=request,
+            )
+        except Exception as exc:
+            LOGGER.warning("Could not create Firebase session cookie; continuing with bearer token auth: %s", exc)
         context = await _resolve_request_context(request, response, payload)
     except PermissionError as exc:
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={"error": str(exc)})
+    except Exception as exc:
+        response.status_code = HTTPStatus.INTERNAL_SERVER_ERROR
+        return {
+            "status": "error",
+            "message": f"Could not create ArkAI sign-in session: {exc}",
+        }
     return {
         "status": "success",
         "userId": user_id,
@@ -1558,6 +1640,13 @@ async def api_roadmap_generate(request: Request, response: Response, payload: Ro
         force_rebuild=bool(payload.forceRebuild),
         revision_reason=str(payload.revisionReason or "").strip(),
     )
+    if result.get("status") == "success" and bool(payload.saveToCalendar):
+        result["calendar"] = await _save_roadmap_result_to_google_calendar(
+            user_id=context["user_id"],
+            roadmap=result.get("roadmap") or {},
+            timezone_name=str(payload.timezone or "").strip(),
+            calendar_start_time=str(payload.calendarStartTime or "09:00").strip(),
+        )
     if result.get("status") != "success":
         response.status_code = HTTPStatus.BAD_REQUEST
     return result

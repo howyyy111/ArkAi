@@ -404,6 +404,10 @@
                                                 placeholder="14" />
                                         </label>
                                         <label>
+                                            <span>Start date</span>
+                                            <input id="roadmap-start-date" type="date" />
+                                        </label>
+                                        <label>
                                             <span>Level</span>
                                             <select id="roadmap-level">
                                                 <option value="beginner">Beginner</option>
@@ -411,6 +415,17 @@
                                                 <option value="advanced">Advanced</option>
                                             </select>
                                         </label>
+                                        <div class="roadmap-calendar-field">
+                                            <span>Calendar</span>
+                                            <div class="roadmap-calendar-sync-field">
+                                                <label class="roadmap-calendar-sync-toggle">
+                                                    <input id="roadmap-calendar-sync" type="checkbox" checked />
+                                                    <span>Add sessions to Google Calendar</span>
+                                                </label>
+                                                <input id="roadmap-calendar-start-time" type="time" value="09:00"
+                                                    aria-label="Roadmap calendar start time" />
+                                            </div>
+                                        </div>
                                     </div>
                                     <p id="roadmap-home-status" class="assessment-status"></p>
                                 </section>

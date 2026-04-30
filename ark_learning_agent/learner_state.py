@@ -1976,8 +1976,14 @@ def build_or_update_roadmap(
     current_topic = str((current or {}).get("topic") or "").strip().lower()
     requested_topic = str(normalized_topic or "").strip().lower()
     is_new_topic_request = bool(current and requested_topic and requested_topic != current_topic)
+    current_start_date = str((current or {}).get("start_date") or "").strip()
+    is_new_start_date_request = bool(
+        current
+        and normalized_start_date
+        and normalized_start_date != current_start_date
+    )
 
-    if current and not force_rebuild and not is_new_topic_request:
+    if current and not force_rebuild and not is_new_topic_request and not is_new_start_date_request:
         recovery_mode, auto_reason = _should_recover(current, weak_topics)
         if not recovery_mode:
             return {

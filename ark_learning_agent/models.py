@@ -33,6 +33,9 @@ class RoadmapGenerateRequest(ApiRequest):
     availableTime: Optional[int] = None
     deadlineDays: Optional[int] = 14
     startDate: Optional[str] = ""
+    saveToCalendar: Optional[bool] = False
+    calendarStartTime: Optional[str] = "09:00"
+    timezone: Optional[str] = ""
     forceRebuild: Optional[bool] = False
     revisionReason: Optional[str] = ""
 
