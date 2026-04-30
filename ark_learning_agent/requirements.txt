@@ -12,4 +12,5 @@ fastapi
 python-multipart
 requests
 Pillow
+pypdf
 uvicorn

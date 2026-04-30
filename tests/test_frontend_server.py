@@ -10,6 +10,7 @@ os.environ.pop("K_SERVICE", None)
 import frontend_server
 from ark_learning_agent.firestore_session_service import FirestoreSessionService
 from ark_learning_agent import frontend_api
+from ark_learning_agent import learner_state
 from ark_learning_agent import productivity_mcp_server
 from ark_learning_agent import web_session_store
 from google.adk.sessions import Session
@@ -404,6 +405,68 @@ class FrontendServerTests(unittest.TestCase):
         kwargs = create_event.call_args.kwargs
         self.assertEqual(kwargs["start_time_iso"], "2026-05-03T10:15:00+07:00")
         self.assertEqual(kwargs["end_time_iso"], "2026-05-03T11:00:00+07:00")
+        self.assertNotIn("Focus:", kwargs["description"])
+
+    def test_prompt_like_topics_fall_back_to_real_study_topic(self):
+        self.assertEqual(
+            learner_state._infer_learning_focus("Can you summarize that", "Environmental Science"),
+            "Environmental Science",
+        )
+        phases = learner_state._build_roadmap_phases(
+            topic="Environmental Science",
+            goal="Prepare for exam",
+            level="beginner",
+            available_time=45,
+            deadline_days=7,
+            weak_topics=["Can you summarize that"],
+            recovery_mode=False,
+            start_date="2026-05-01",
+        )
+
+        first_session = phases[0]["sessions"][0]
+        self.assertEqual(first_session["focus"], "Environmental Science")
+        self.assertEqual(first_session["title"], "Environmental Science session 1")
+
+    def test_completing_session_does_not_rebuild_standard_roadmap(self):
+        roadmap = {
+            "roadmap_id": "roadmap-1",
+            "topic": "Trigonometry",
+            "goal": "Final exam",
+            "level": "advanced",
+            "available_time": 45,
+            "deadline_days": 7,
+            "mode": "standard",
+            "status": "active",
+            "phases": learner_state._build_roadmap_phases(
+                topic="Trigonometry",
+                goal="Final exam",
+                level="advanced",
+                available_time=45,
+                deadline_days=7,
+                weak_topics=[],
+                recovery_mode=False,
+                start_date="2026-05-01",
+            ),
+        }
+
+        with mock.patch.object(learner_state, "_load_roadmap", return_value=roadmap), \
+             mock.patch.object(learner_state, "_save_roadmap"), \
+             mock.patch.object(learner_state, "save_learning_progress"), \
+             mock.patch.object(
+                 learner_state,
+                 "get_mastery_snapshot",
+                 return_value={"topics": [{"topic": "Trigonometry", "score": 0.2}]},
+             ):
+            result = learner_state.update_roadmap_session(
+                user_id="learner@example.com",
+                phase_id="phase-1",
+                session_id="phase-1-session-1",
+                status="completed",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["summary"]["total_sessions"], 6)
+        self.assertEqual(result["roadmap"]["mode"], "standard")
 
 
 if __name__ == "__main__":

@@ -9,5 +9,6 @@ firebase-admin
 google-genai
 requests
 Pillow
+pypdf
 uvicorn
 fastapi

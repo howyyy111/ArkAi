@@ -1838,6 +1838,69 @@ def _phase_title(index: int) -> str:
     return ["Foundation", "Practice", "Checkpoint", "Extension"][min(index, 3)]
 
 
+def _infer_learning_focus(value: str, fallback: str = "") -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n?.!,;:")
+    fallback_text = re.sub(r"\s+", " ", str(fallback or "")).strip()
+    if not text:
+        return fallback_text
+
+    lowered = text.lower()
+    vague_references = {
+        "that",
+        "this",
+        "it",
+        "this topic",
+        "that topic",
+        "this material",
+        "the material",
+        "the notes",
+    }
+    if lowered in vague_references:
+        return fallback_text
+
+    command_match = re.match(
+        r"^(?:(?:can|could|would)\s+you\s+|please\s+)?"
+        r"(?:summari[sz]e|explain|teach(?:\s+me)?|quiz(?:\s+me)?(?:\s+on)?|"
+        r"help(?:\s+me)?(?:\s+learn| study)?|make(?:\s+me)?(?:\s+a)?\s+roadmap(?:\s+for)?|"
+        r"create(?:\s+a)?\s+roadmap(?:\s+for)?|study|learn)"
+        r"\s+(?:about\s+|on\s+|for\s+)?(.+)$",
+        lowered,
+    )
+    if command_match:
+        candidate = re.sub(r"\s+", " ", command_match.group(1)).strip(" \t\r\n?.!,;:")
+        if candidate and candidate not in vague_references:
+            return candidate
+        return fallback_text
+
+    if lowered.startswith(("can you ", "could you ", "would you ", "please ")):
+        return fallback_text
+    return text
+
+
+def _dedupe_focus_topics(values: list[str], fallback: str) -> list[str]:
+    seen: set[str] = set()
+    topics: list[str] = []
+    for value in values:
+        focus = _infer_learning_focus(value, fallback)
+        key = focus.lower()
+        if focus and key not in seen:
+            seen.add(key)
+            topics.append(focus)
+    return topics
+
+
+def _roadmap_has_prompt_like_focus(roadmap: dict[str, Any]) -> bool:
+    for phase in roadmap.get("phases", []):
+        for session in phase.get("sessions", []):
+            focus = str(session.get("focus") or "").strip()
+            title = str(session.get("title") or "").strip()
+            if focus and _infer_learning_focus(focus, "") != focus:
+                return True
+            if title and _infer_learning_focus(re.sub(r"\s+session\s+\d+\s*$", "", title, flags=re.IGNORECASE), "") == "":
+                return True
+    return False
+
+
 def _build_roadmap_phases(
     topic: str,
     goal: str,
@@ -1849,7 +1912,7 @@ def _build_roadmap_phases(
     start_date: str = "",
 ) -> list[dict[str, Any]]:
     topic_label = topic or "your target topic"
-    focus_topics = weak_topics[:] if weak_topics else [topic_label]
+    focus_topics = _dedupe_focus_topics(weak_topics, topic_label) if weak_topics else [topic_label]
     total_phases = 2 if recovery_mode else (3 if deadline_days > 10 else 2)
     phases = []
     spacing = max(2, deadline_days // max(total_phases, 1))
@@ -1955,10 +2018,15 @@ def build_or_update_roadmap(
     profile_result = get_learner_profile(user_id)
     profile = profile_result if profile_result.get("status") == "success" else {}
     mastery = get_mastery_snapshot(user_id)
-    weak_topics = [item.get("topic", "") for item in mastery.get("topics", []) if item.get("score", 0.0) < 0.65][:3]
+    raw_weak_topics = [item.get("topic", "") for item in mastery.get("topics", []) if item.get("score", 0.0) < 0.65][:3]
     current = _load_roadmap(user_id)
 
-    normalized_topic = str(topic).strip() or profile.get("topic") or (weak_topics[0] if weak_topics else "General learning")
+    normalized_topic = (
+        _infer_learning_focus(str(topic or ""), "")
+        or _infer_learning_focus(str(profile.get("topic") or ""), "")
+        or (_dedupe_focus_topics(raw_weak_topics, "")[0] if _dedupe_focus_topics(raw_weak_topics, "") else "")
+        or "General learning"
+    )
     normalized_goal = str(goal).strip() or profile.get("goal") or f"Build stronger mastery in {normalized_topic}"
     normalized_level = str(level).strip() or profile.get("level") or "beginner"
     normalized_time = available_time if available_time not in ("", None) else profile.get("available_time")
@@ -1982,9 +2050,10 @@ def build_or_update_roadmap(
         and normalized_start_date
         and normalized_start_date != current_start_date
     )
+    has_prompt_like_focus = bool(current and _roadmap_has_prompt_like_focus(current))
 
-    if current and not force_rebuild and not is_new_topic_request and not is_new_start_date_request:
-        recovery_mode, auto_reason = _should_recover(current, weak_topics)
+    if current and not force_rebuild and not is_new_topic_request and not is_new_start_date_request and not has_prompt_like_focus:
+        recovery_mode, auto_reason = _should_recover(current, _dedupe_focus_topics(raw_weak_topics, normalized_topic))
         if not recovery_mode:
             return {
                 "status": "success",
@@ -1996,6 +2065,8 @@ def build_or_update_roadmap(
     if recovery_mode_override is not None:
         recovery_mode = bool(recovery_mode_override)
 
+    if has_prompt_like_focus and not auto_reason:
+        auto_reason = "cleaned prompt-like roadmap focus"
     if not auto_reason:
         auto_reason = "manual refresh" if force_rebuild else "first roadmap"
 
@@ -2015,7 +2086,7 @@ def build_or_update_roadmap(
         level=normalized_level,
         available_time=normalized_time,
         deadline_days=deadline_days,
-        weak_topics=weak_topics,
+        weak_topics=_dedupe_focus_topics(raw_weak_topics, normalized_topic),
         recovery_mode=recovery_mode,
         start_date=normalized_start_date,
     )
@@ -2103,8 +2174,7 @@ def update_roadmap_session(
             score=0.0,
         )
 
-    weak_topics = [item.get("topic", "") for item in get_mastery_snapshot(user_id).get("topics", []) if item.get("score", 0.0) < 0.65][:3]
-    trigger_recovery, reason = _should_recover(roadmap, weak_topics)
+    trigger_recovery, reason = _should_recover(roadmap, [])
     if trigger_recovery and roadmap.get("mode") != "recovery":
         rebuilt = build_or_update_roadmap(
             user_id=user_id,

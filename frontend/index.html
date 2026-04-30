@@ -422,8 +422,23 @@
                                                     <input id="roadmap-calendar-sync" type="checkbox" checked />
                                                     <span>Add sessions to Google Calendar</span>
                                                 </label>
-                                                <input id="roadmap-calendar-start-time" type="time" value="09:00"
-                                                    aria-label="Roadmap calendar start time" />
+                                                <div class="roadmap-time-picker" aria-label="Roadmap calendar start time">
+                                                    <input id="roadmap-calendar-start-time" type="hidden" value="09:00" />
+                                                    <div class="roadmap-time-combobox">
+                                                        <input id="roadmap-calendar-time-input" type="text"
+                                                            inputmode="numeric" autocomplete="off" value="09:00"
+                                                            aria-label="Roadmap calendar start time"
+                                                            aria-controls="roadmap-calendar-time-options"
+                                                            aria-expanded="false" />
+                                                        <div id="roadmap-calendar-time-options"
+                                                            class="roadmap-time-options hidden" role="listbox"></div>
+                                                    </div>
+                                                    <select id="roadmap-calendar-period-select"
+                                                        aria-label="Roadmap calendar start period">
+                                                        <option value="AM">AM</option>
+                                                        <option value="PM">PM</option>
+                                                    </select>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -556,7 +571,7 @@
                                         <p class="drop-zone-title">Drop file or browse</p>
                                         <p class="drop-zone-types">.txt .md .pdf .py .js .png .jpg</p>
                                         <input id="material-file" type="file"
-                                            accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.png,.jpg,.jpeg,.webp" />
+                                            accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
                                     </label>
 
                                     <button id="upload-material-button" class="primary-button wide-button"

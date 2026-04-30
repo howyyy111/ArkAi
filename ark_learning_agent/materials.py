@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import mimetypes
 import os
@@ -30,6 +31,12 @@ UPLOADS_DIR = BASE_DIR / "learner_uploads"
 MATERIAL_MODEL = os.environ.get("ARKAIS_MATERIAL_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 MAX_MATERIAL_FILE_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MATERIAL_LIBRARY_SIZE_BYTES = 25 * 1024 * 1024
+
+TEXT_EXTENSIONS = (
+    ".md", ".txt", ".csv", ".tsv", ".json", ".py", ".js", ".html", ".css",
+    ".xml", ".yaml", ".yml", ".java", ".c", ".cpp", ".cs", ".go", ".rs",
+    ".rb", ".php", ".sql", ".log",
+)
 
 
 def _utc_now() -> str:
@@ -107,12 +114,73 @@ def _decode_base64(data_base64: str) -> bytes:
     return base64.b64decode(raw)
 
 
+def _extract_text_from_pdf(blob: bytes) -> str:
+    for module_name in ("pypdf", "PyPDF2"):
+        try:
+            module = __import__(module_name)
+            reader = module.PdfReader(io.BytesIO(blob))
+            page_text = [
+                page.extract_text() or ""
+                for page in reader.pages[:40]
+            ]
+            text = "\n\n".join(part.strip() for part in page_text if part.strip())
+            if text:
+                return text
+        except Exception:
+            continue
+
+    try:
+        decoded = blob.decode("latin-1", errors="ignore")
+    except Exception:
+        return ""
+    literal_strings = re.findall(r"\(([^()]*)\)\s*Tj", decoded)
+    array_strings = re.findall(r"\[((?:\([^()]*\)\s*)+)\]\s*TJ", decoded)
+    parts = []
+    for item in literal_strings:
+        cleaned = item.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
+        if cleaned.strip():
+            parts.append(cleaned.strip())
+    for group in array_strings:
+        joined = "".join(re.findall(r"\(([^()]*)\)", group))
+        if joined.strip():
+            parts.append(joined.strip())
+    return re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+
+def _extract_text_from_image(blob: bytes, name: str) -> str:
+    client = _get_genai_client()
+    if not client:
+        return ""
+    try:
+        with Image.open(io.BytesIO(blob)) as image:
+            image_copy = image.copy()
+        response = client.models.generate_content(
+            model=MATERIAL_MODEL,
+            contents=[
+                (
+                    "Extract the readable text and study-relevant content from this uploaded "
+                    f"image named {name}. Return concise plain text only."
+                ),
+                image_copy,
+            ],
+            config=types.GenerateContentConfig(temperature=0.1),
+        )
+        return (response.text or "").strip()
+    except Exception:
+        return ""
+
+
 def _extract_text_from_payload(name: str, mime_type: str, blob: bytes, pasted_text: str) -> str:
     if pasted_text:
         return pasted_text.strip()
 
     guessed_mime = mime_type or mimetypes.guess_type(name)[0] or ""
-    if guessed_mime.startswith("text/") or name.lower().endswith((".md", ".txt", ".csv", ".json", ".py", ".js", ".html", ".css")):
+    lower_name = name.lower()
+    if guessed_mime == "application/pdf" or lower_name.endswith(".pdf"):
+        return _extract_text_from_pdf(blob)
+    if guessed_mime.startswith("image/"):
+        return _extract_text_from_image(blob, name)
+    if guessed_mime.startswith("text/") or lower_name.endswith(TEXT_EXTENSIONS):
         try:
             return blob.decode("utf-8")
         except UnicodeDecodeError:
@@ -159,9 +227,9 @@ def save_learning_material(
     mime = mime_type or mimetypes.guess_type(clean_name)[0] or "application/octet-stream"
     allowed_mimes = [
         "application/pdf", "text/plain", "text/csv", "application/json", 
-        "image/png", "image/jpeg", "image/webp"
+        "application/javascript", "application/xml", "image/png", "image/jpeg", "image/webp"
     ]
-    if not pasted_text and not mime.startswith("text/") and mime not in allowed_mimes:
+    if not pasted_text and not mime.startswith("text/") and mime not in allowed_mimes and not clean_name.lower().endswith(TEXT_EXTENSIONS):
         return {"status": "error", "message": f"Unsupported file type: {mime}"}
 
     kind = "image" if mime.startswith("image/") else "text" if pasted_text or mime.startswith("text/") else "file"
@@ -498,7 +566,7 @@ def tutor_from_materials(user_id: str, query: str, material_ids: list[str] | Non
     if not records:
         return {"status": "error", "message": "No materials found to tutor from."}
 
-    text_records = [record for record in records if record.get("kind") == "text" and record.get("extracted_text")]
+    text_records = [record for record in records if record.get("extracted_text")]
     image_records = [record for record in records if record.get("kind") == "image"]
     client = _get_genai_client()
 

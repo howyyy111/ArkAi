@@ -789,7 +789,6 @@ async def _save_roadmap_sessions_to_google_calendar(user_id: str, message: str, 
         duration = max(15, min(240, int(session.get("duration_minutes") or 30)))
         end = start + timedelta(minutes=duration)
         description_parts = [
-            f"Focus: {session['focus']}" if session.get("focus") else "",
             f"Phase: {session['phase_title']}" if session.get("phase_title") else "",
             session.get("phase_goal") or "",
             "Created from ArkAI Tutor.",
@@ -856,7 +855,6 @@ async def _save_roadmap_result_to_google_calendar(
             duration = max(15, min(240, int(session.get("duration_minutes") or 45)))
             end = start + timedelta(minutes=duration)
             description_parts = [
-                f"Focus: {session.get('focus')}" if session.get("focus") else "",
                 f"Phase: {phase.get('title')}" if phase.get("title") else "",
                 str(phase.get("goal") or "").strip(),
                 "Created from ArkAI roadmap.",
@@ -1710,7 +1708,6 @@ async def api_roadmap_session_save_calendar(request: Request, response: Response
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Choose a start time first.")
 
     description_parts = [
-        f"Focus: {focus}" if focus else "",
         f"Phase: {phase_title}" if phase_title else "",
         phase_goal,
         "Created from ArkAI roadmap.",

@@ -67,6 +67,9 @@ const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
 const roadmapStartDateInput = document.getElementById("roadmap-start-date");
 const roadmapCalendarSyncInput = document.getElementById("roadmap-calendar-sync");
 const roadmapCalendarStartTimeInput = document.getElementById("roadmap-calendar-start-time");
+const roadmapCalendarTimeInput = document.getElementById("roadmap-calendar-time-input");
+const roadmapCalendarTimeOptions = document.getElementById("roadmap-calendar-time-options");
+const roadmapCalendarPeriodSelect = document.getElementById("roadmap-calendar-period-select");
 const roadmapLevelSelect = document.getElementById("roadmap-level");
 const roadmapHomeStatus = document.getElementById("roadmap-home-status");
 const roadmapStatus = document.getElementById("roadmap-status");
@@ -989,12 +992,20 @@ function setGoogleSavesStatus(text, connected = false) {
     googleSavesStatus.textContent = text;
   }
   if (connectGoogleSavesButton) {
+    const statusText = String(text || "").toLowerCase();
+    const connectionFailed =
+      statusText.includes("failed")
+      || (statusText.includes("not connected") && !statusText.includes("not connected yet"))
+      || statusText.includes("check failed")
+      || statusText.includes("closed before")
+      || statusText.includes("try connect again");
     connectGoogleSavesButton.textContent = googleSavesConnectionInProgress
       ? "Connecting..."
-      : connected ? "Reconnect" : "Connect";
+      : connected ? "Connected" : connectionFailed ? "Reconnect" : "Connect";
     connectGoogleSavesButton.disabled =
       googleSavesConnectionInProgress
       || !googleSavesSetupReady
+      || connected
       || Boolean(activeSession.isAnonymous)
       || authMode !== "firebase";
   }
@@ -3406,9 +3417,123 @@ function setupRoadmapDateControls() {
       roadmapStartDateInput.value = today;
     }
   }
-  if (roadmapCalendarStartTimeInput && !roadmapCalendarStartTimeInput.value) {
-    roadmapCalendarStartTimeInput.value = "09:00";
+  setupRoadmapTimePicker();
+}
+
+function setupRoadmapTimePicker() {
+  if (!roadmapCalendarStartTimeInput || !roadmapCalendarTimeInput || !roadmapCalendarTimeOptions || !roadmapCalendarPeriodSelect) {
+    if (roadmapCalendarStartTimeInput && !roadmapCalendarStartTimeInput.value) {
+      roadmapCalendarStartTimeInput.value = "09:00";
+    }
+    return;
   }
+
+  const timeOptions = [];
+  for (let hour = 1; hour <= 12; hour += 1) {
+    for (let minute = 0; minute < 60; minute += 15) {
+      timeOptions.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+    }
+  }
+
+  const parseTimeText = (value) => {
+    const raw = String(value || "").trim().replace(/\s+/g, "");
+    const compact = raw.match(/^(\d{1,2})(\d{2})$/);
+    const colon = raw.match(/^(\d{1,2})(?::(\d{1,2}))?$/);
+    const match = compact || colon;
+    if (!match) {
+      return null;
+    }
+    const hour = Number(match[1]);
+    const minute = Number(match[2] ?? 0);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 1 || hour > 12 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return {
+      hour,
+      minute,
+      label: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+    };
+  };
+
+  const syncHiddenValue = ({ normalizeInput = false } = {}) => {
+    const parsed = parseTimeText(roadmapCalendarTimeInput.value);
+    if (!parsed) {
+      return false;
+    }
+    const period = roadmapCalendarPeriodSelect.value === "PM" ? "PM" : "AM";
+    let hour24 = parsed.hour % 12;
+    if (period === "PM") {
+      hour24 += 12;
+    }
+    roadmapCalendarStartTimeInput.value = `${String(hour24).padStart(2, "0")}:${String(parsed.minute).padStart(2, "0")}`;
+    if (normalizeInput) {
+      roadmapCalendarTimeInput.value = parsed.label;
+    }
+    return true;
+  };
+
+  const hideOptions = () => {
+    roadmapCalendarTimeOptions.classList.add("hidden");
+    roadmapCalendarTimeInput.setAttribute("aria-expanded", "false");
+  };
+
+  const showOptions = () => {
+    const query = String(roadmapCalendarTimeInput.value || "").trim();
+    const filtered = timeOptions.filter((value) => (
+      value.startsWith(query) || value.replace(/^0/, "").startsWith(query)
+    )).slice(0, 12);
+    const visibleOptions = filtered.length ? filtered : timeOptions.slice(0, 12);
+    roadmapCalendarTimeOptions.innerHTML = "";
+    visibleOptions.forEach((value) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "roadmap-time-option";
+      button.textContent = value;
+      button.setAttribute("role", "option");
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        roadmapCalendarTimeInput.value = value;
+        syncHiddenValue({ normalizeInput: true });
+        hideOptions();
+      });
+      roadmapCalendarTimeOptions.appendChild(button);
+    });
+    roadmapCalendarTimeOptions.classList.remove("hidden");
+    roadmapCalendarTimeInput.setAttribute("aria-expanded", "true");
+  };
+
+  const currentValue = String(roadmapCalendarStartTimeInput.value || "09:00").slice(0, 5);
+  const [currentHourText, currentMinuteText] = currentValue.split(":");
+  const currentHour = Math.max(0, Math.min(23, Number(currentHourText) || 9));
+  const currentMinute = Math.max(0, Math.min(59, Number(currentMinuteText) || 0));
+  const currentPeriod = currentHour >= 12 ? "PM" : "AM";
+  const currentHour12 = currentHour % 12 || 12;
+  roadmapCalendarTimeInput.value = `${String(currentHour12).padStart(2, "0")}:${String(currentMinute).padStart(2, "0")}`;
+  roadmapCalendarPeriodSelect.value = currentPeriod;
+  syncHiddenValue({ normalizeInput: true });
+
+  roadmapCalendarTimeInput.addEventListener("focus", showOptions);
+  roadmapCalendarTimeInput.addEventListener("input", () => {
+    syncHiddenValue();
+    showOptions();
+  });
+  roadmapCalendarTimeInput.addEventListener("blur", () => {
+    if (!syncHiddenValue({ normalizeInput: true })) {
+      roadmapCalendarTimeInput.value = "09:00";
+      roadmapCalendarPeriodSelect.value = "AM";
+      roadmapCalendarStartTimeInput.value = "09:00";
+    }
+    window.setTimeout(hideOptions, 120);
+  });
+  roadmapCalendarPeriodSelect.addEventListener("change", () => {
+    syncHiddenValue({ normalizeInput: true });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".roadmap-time-picker")) {
+      hideOptions();
+    }
+  });
 }
 
 async function saveRoadmapToGoogleTasks() {
