@@ -438,10 +438,46 @@ function setupTimeControl(input, unitSelect) {
     return;
   }
 
+  const getEmptySpinDefault = () => {
+    const configuredDefault = Number(input.dataset.emptySpinDefault || 0);
+    const fallbackDefault = unitSelect.value === "hours" ? 1 : 45;
+    const maxValue = unitSelect.value === "hours" ? 24 : 60;
+    const nextValue = Number.isFinite(configuredDefault) && configuredDefault > 0
+      ? configuredDefault
+      : fallbackDefault;
+    return String(Math.min(maxValue, Math.max(1, Math.round(nextValue))));
+  };
+
+  const applyEmptySpinDefault = () => {
+    input.value = getEmptySpinDefault();
+    unitSelect.dataset.previousUnit = unitSelect.value || "minutes";
+    syncTimeControl(input, unitSelect);
+  };
+
   unitSelect.dataset.previousUnit = unitSelect.value || "minutes";
   syncTimeControl(input, unitSelect);
 
+  input.addEventListener("pointerdown", (event) => {
+    if (input.value !== "" || input.type !== "number") {
+      return;
+    }
+    if (event.offsetX >= input.clientWidth - 32) {
+      input.dataset.pendingEmptySpinDefault = "true";
+    }
+  });
+  input.addEventListener("keydown", (event) => {
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && input.value === "") {
+      event.preventDefault();
+      applyEmptySpinDefault();
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
   input.addEventListener("input", () => {
+    if (input.dataset.pendingEmptySpinDefault === "true") {
+      delete input.dataset.pendingEmptySpinDefault;
+      applyEmptySpinDefault();
+      return;
+    }
     const maxValue = unitSelect.value === "hours" ? 24 : 60;
     if (Number(input.value) > maxValue) {
       normalizeTimeControlValue(input, unitSelect);
@@ -1207,11 +1243,19 @@ function renderChatHistoryModal(sessions = []) {
               <span>${escapeHtml(formatRelativeDays(item.last_message_at || item.updated_at || item.created_at))} • ${Number(item.message_count || 0)} messages</span>
             </button>
             <button
-              class="mini-button"
+              class="mini-button icon-label-button"
               type="button"
               data-chat-session-delete="${escapeHtml(item.session_id)}"
             >
-              Delete
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+              </svg>
+              <span>Delete</span>
             </button>
           </article>
         `).join("")}
@@ -2556,7 +2600,7 @@ function renderInterventionPlan(plan) {
   interventionRisk.textContent = riskLabel;
   interventionSummary.textContent = completedSessions
     ? `Mastery ${masteryPercent}%. ${completedSessions} done. Next: ${recommended}`
-    : "No sessions yet. Start with one focused task.";
+    : "No sessions yet. Start with one focused task....";
   refreshOverview();
 }
 
@@ -2576,7 +2620,14 @@ function renderWeeklyReport(report) {
       </header>
       <p>${escapeHtml(report.note_text).replace(/\n/g, "<br />")}</p>
       <div class="inline-actions">
-        <button id="save-report-docs-button" class="ghost-button" type="button">Save to Google Docs</button>
+        <button id="save-report-docs-button" class="ghost-button icon-label-button" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
+            <path d="M17 21v-8H7v8"></path>
+            <path d="M7 3v5h8"></path>
+          </svg>
+          <span>Save to Google Docs</span>
+        </button>
       </div>
       <p id="report-save-status" class="state-summary">Save this report to Google Docs when you are ready.</p>
     </article>
@@ -2895,9 +2946,23 @@ function buildMessageBody(body) {
           const pre = element.parentElement;
           const block = document.createElement("div");
           block.className = "code-block";
+          const copyButton = document.createElement("button");
+          copyButton.className = "code-copy-button";
+          copyButton.type = "button";
+          copyButton.title = "Copy code";
+          copyButton.setAttribute("aria-label", "Copy code");
+          copyButton.dataset.copyCode = element.textContent || "";
+          copyButton.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="14" height="14" x="8" y="8" rx="2"></rect>
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+            </svg>
+          `;
 
           pre.parentNode.insertBefore(block, pre);
           block.appendChild(label);
+          block.appendChild(copyButton);
           block.appendChild(pre);
         }
         window.hljs.highlightElement(element);
@@ -2919,6 +2984,41 @@ function buildMessageBody(body) {
   return container;
 }
 
+async function copyTextToClipboard(text) {
+  const value = String(text || "");
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function buildCopyMessageButton(body = "") {
+  const button = document.createElement("button");
+  button.className = "message-copy-button";
+  button.type = "button";
+  button.title = "Copy message";
+  button.setAttribute("aria-label", "Copy message");
+  button.dataset.copyMessage = body;
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect width="14" height="14" x="8" y="8" rx="2"></rect>
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+    </svg>
+  `;
+  return button;
+}
+
 function appendMessage(role, body, skipSave = false) {
   const emptyState = messages.querySelector(".empty-state");
   if (emptyState) {
@@ -2934,6 +3034,7 @@ function appendMessage(role, body, skipSave = false) {
 
   article.appendChild(roleLabel);
   article.appendChild(buildMessageBody(body));
+  article.appendChild(buildCopyMessageButton(body));
   messages.appendChild(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
 
@@ -3513,7 +3614,45 @@ promptInput.addEventListener("input", () => {
   autoresizePrompt();
 });
 
-messages.addEventListener("click", (event) => {
+messages.addEventListener("click", async (event) => {
+  const codeCopyButton = event.target.closest("[data-copy-code]");
+  if (codeCopyButton) {
+    try {
+      await copyTextToClipboard(codeCopyButton.dataset.copyCode || "");
+      codeCopyButton.classList.add("is-copied");
+      codeCopyButton.setAttribute("aria-label", "Copied");
+      codeCopyButton.title = "Copied";
+      setTimeout(() => {
+        codeCopyButton.classList.remove("is-copied");
+        codeCopyButton.setAttribute("aria-label", "Copy code");
+        codeCopyButton.title = "Copy code";
+      }, 1200);
+    } catch {
+      codeCopyButton.setAttribute("aria-label", "Copy failed");
+      codeCopyButton.title = "Copy failed";
+    }
+    return;
+  }
+
+  const copyButton = event.target.closest("[data-copy-message]");
+  if (copyButton) {
+    try {
+      await copyTextToClipboard(copyButton.dataset.copyMessage || "");
+      copyButton.classList.add("is-copied");
+      copyButton.setAttribute("aria-label", "Copied");
+      copyButton.title = "Copied";
+      setTimeout(() => {
+        copyButton.classList.remove("is-copied");
+        copyButton.setAttribute("aria-label", "Copy message");
+        copyButton.title = "Copy message";
+      }, 1200);
+    } catch {
+      copyButton.setAttribute("aria-label", "Copy failed");
+      copyButton.title = "Copy failed";
+    }
+    return;
+  }
+
   const starterButton = event.target.closest("[data-starter-prompt]");
   if (!starterButton) {
     return;
@@ -3710,6 +3849,28 @@ generateRoadmapButton.addEventListener("click", async () => {
     roadmapStatus.textContent = error.message;
   }
 });
+
+function isRoadmapStatusCreateAction() {
+  return /^create your roadmap\.?$/i.test(String(roadmapStatus?.textContent || "").trim());
+}
+
+function triggerRoadmapStatusCreate() {
+  if (!isRoadmapStatusCreateAction()) {
+    return;
+  }
+  generateRoadmapButton?.click();
+}
+
+if (roadmapStatus) {
+  roadmapStatus.addEventListener("click", triggerRoadmapStatusCreate);
+  roadmapStatus.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    triggerRoadmapStatusCreate();
+  });
+}
 
 rebuildRoadmapButton?.addEventListener("click", async () => {
   setActiveView("plan");
@@ -4077,7 +4238,7 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
   try {
     const sampleStyleFromFile = sampleStyleFile ? await readFileAsText(sampleStyleFile) : "";
     const sampleStylePayload = [
-      materialsMockStyleInput.value.trim(),
+      materialsMockStyleInput?.value?.trim() || "",
       sampleStyleFile ? `Uploaded sample exam: ${sampleStyleFile.name}` : "",
       sampleStyleFromFile.trim(),
     ].filter(Boolean).join("\n\n");

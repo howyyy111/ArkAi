@@ -231,8 +231,15 @@
                                         </button>
                                         <textarea id="prompt" name="prompt" rows="1"
                                             placeholder="Ask a clear question, paste a topic, or continue a roadmap session."></textarea>
-                                        <button id="submit-button" class="primary-button" type="submit">
+                                        <button id="submit-button" class="primary-button send-submit-button"
+                                            type="submit" aria-label="Send message">
                                             <span class="button-text">Send</span>
+                                            <svg class="send-button-icon" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round" aria-hidden="true">
+                                                <path d="m22 2-7 20-4-9-9-4Z"></path>
+                                                <path d="M22 2 11 13"></path>
+                                            </svg>
                                             <span class="button-loader" aria-hidden="true"></span>
                                         </button>
                                     </div>
@@ -383,6 +390,7 @@
                                             <span>Time per day</span>
                                             <div class="time-unit-field">
                                                 <input id="roadmap-time" type="number" min="1" max="60" step="1"
+                                                    data-empty-spin-default="45"
                                                     placeholder="45" />
                                                 <select id="roadmap-time-unit" aria-label="Roadmap time unit">
                                                     <option value="minutes">min</option>
@@ -447,7 +455,8 @@
                                     <h3>Your study path</h3>
                                 </div>
                                 <div class="inline-actions roadmap-sync-actions">
-                                    <div id="roadmap-status" class="assessment-status">Create your roadmap.
+                                    <div id="roadmap-status" class="assessment-status roadmap-status-action" role="button"
+                                        tabindex="0" title="Create your roadmap">Create your roadmap.
                                     </div>
                                     <button id="save-roadmap-tasks-button" class="ghost-button mini-button"
                                         type="button" disabled>Save to Google Tasks</button>
@@ -463,10 +472,29 @@
                                     </div>
                                     <div class="saved-roadmaps-toolbar">
                                         <button id="delete-all-saved-roadmaps-button"
-                                            class="ghost-button mini-button subtle-action" type="button">Delete
-                                            all</button>
-                                        <button id="close-saved-roadmaps-button" class="ghost-button mini-button"
-                                            type="button">Close</button>
+                                            class="ghost-button mini-button subtle-action icon-label-button"
+                                            type="button">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true">
+                                                <path d="M3 6h18"></path>
+                                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                                                <path d="M10 11v6"></path>
+                                                <path d="M14 11v6"></path>
+                                            </svg>
+                                            <span>Delete all</span>
+                                        </button>
+                                        <button id="close-saved-roadmaps-button"
+                                            class="ghost-button mini-button icon-label-button" type="button">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true">
+                                                <path d="M18 6 6 18"></path>
+                                                <path d="m6 6 12 12"></path>
+                                            </svg>
+                                            <span>Close</span>
+                                        </button>
                                     </div>
                                 </div>
                                 <div id="saved-roadmaps-list" class="saved-roadmaps-list">
@@ -525,16 +553,26 @@
                                         <div>
                                             <p class="section-label">Mock test</p>
                                             <h4>Create and download</h4>
+                                            <div id="materials-selection-summary" class="state-summary">
+                                                No
+                                                materials selected.</div>
                                         </div>
-                                        <div id="materials-selection-summary" class="state-summary field-note">
-                                            No
-                                            materials selected.</div>
                                     </div>
                                     <input id="material-query" type="hidden" />
 
                                     <details class="materials-settings">
                                         <summary>
-                                            <span>Mock test settings</span>
+                                            <span class="settings-summary-label">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                    aria-hidden="true">
+                                                    <path
+                                                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z">
+                                                    </path>
+                                                    <circle cx="12" cy="12" r="3"></circle>
+                                                </svg>
+                                                <span>Mock test settings</span>
+                                            </span>
                                         </summary>
                                         <div class="materials-settings-body">
                                             <label>
@@ -542,27 +580,28 @@
                                                 <textarea id="materials-mock-structure" rows="3"
                                                     placeholder="Example: 2 short answers, 1 essay, 3 multiple choice."></textarea>
                                             </label>
-                                            <label>
-                                                <span class="eyebrow">Sample exam style</span>
-                                                <textarea id="materials-mock-style" rows="3"
-                                                    placeholder="Paste or describe the style of a previous exam."></textarea>
-                                            </label>
-                                            <div class="sample-exam-divider" aria-hidden="true">
-                                                <span>or upload a sample exam</span>
-                                            </div>
                                             <label class="file-upload-field">
                                                 <span class="eyebrow">Upload sample exam</span>
-                                                <input id="materials-mock-style-file" class="file-input-control"
-                                                    type="file"
-                                                    accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
+                                                <span class="file-input-shell">
+                                                    <input id="materials-mock-style-file" class="file-input-control"
+                                                        type="file"
+                                                        accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
+                                                </span>
                                             </label>
                                         </div>
                                     </details>
 
                                     <div class="materials-action-grid">
-                                        <button id="create-materials-mock-test-button" class="ghost-button wide-button"
-                                            type="button">Create mock
-                                            test</button>
+                                        <button id="create-materials-mock-test-button"
+                                            class="ghost-button wide-button icon-label-button" type="button">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true">
+                                                <path d="M12 20h9"></path>
+                                                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                                            </svg>
+                                            <span>Create mock test</span>
+                                        </button>
                                         <button id="download-materials-mock-test-button"
                                             class="ghost-button wide-button hidden" type="button">Download mock
                                             test</button>
@@ -583,8 +622,19 @@
                                     <div class="inline-actions">
                                         <p id="materials-library-summary" class="state-summary">Upload and save files.
                                             Create a mock test when ready. Max 5 MB each, 25 MB total.</p>
-                                        <button id="delete-all-materials-button" class="ghost-button" type="button"
-                                            disabled>Delete all</button>
+                                        <button id="delete-all-materials-button"
+                                            class="ghost-button icon-label-button" type="button" disabled>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true">
+                                                <path d="M3 6h18"></path>
+                                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                                                <path d="M10 11v6"></path>
+                                                <path d="M14 11v6"></path>
+                                            </svg>
+                                            <span>Delete all</span>
+                                        </button>
                                     </div>
                                 </div>
                                 <div id="materials-library" class="materials-library">
@@ -618,8 +668,20 @@
                                         </div>
                                     </div>
                                     <div class="tab-actions">
-                                        <button id="refresh-insights-button" class="ghost-button" type="button">Refresh
-                                            insights</button>
+                                        <button id="refresh-insights-button" class="ghost-button icon-label-button"
+                                            type="button">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                aria-hidden="true">
+                                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16">
+                                                </path>
+                                                <path d="M3 21v-5h5"></path>
+                                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8">
+                                                </path>
+                                                <path d="M16 8h5V3"></path>
+                                            </svg>
+                                            <span>Refresh insights</span>
+                                        </button>
                                         <button id="generate-report-button" class="primary-button" type="button">Open
                                             report</button>
                                     </div>
@@ -699,9 +761,13 @@
                         <section id="report-workspace" class="insights-workspace content-card panel-lite hidden"
                             aria-live="polite">
                             <div class="workspace-header">
-                                <button class="ghost-button mini-button" type="button" data-insights-back>Back
-                                    to
-                                    insights</button>
+                                <button class="ghost-button mini-button icon-only-button" type="button"
+                                    data-insights-back aria-label="Back to insights" title="Back to insights">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m15 18-6-6 6-6"></path>
+                                    </svg>
+                                </button>
                                 <div>
                                     <p class="section-label">Report</p>
                                     <h3>Weekly learning report</h3>
