@@ -174,7 +174,49 @@ def auth_callback(request):
             }
         )
         
-        return f"<h1>Success!</h1><p>Tokens saved securely in Firebase for user: <b>{username}</b></p><br><p>You can close this tab and return to the chat, tell the agent you have authorized it, and repeat your command!</p>"
+        return """
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Google saves connected</title>
+            <style>
+                body {
+                    margin: 0;
+                    min-height: 100vh;
+                    display: grid;
+                    place-items: center;
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    color: #111827;
+                    background: #f8fafc;
+                }
+                main {
+                    width: min(440px, calc(100% - 32px));
+                    border: 1px solid #e5e7eb;
+                    border-radius: 20px;
+                    padding: 28px;
+                    background: #ffffff;
+                    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+                }
+                h1 { margin: 0 0 10px; font-size: 1.45rem; }
+                p { margin: 0; color: #4b5563; line-height: 1.55; }
+            </style>
+        </head>
+        <body>
+            <main>
+                <h1>Google saves connected</h1>
+                <p>You can return to ArkAI now. This window will close automatically if your browser allows it.</p>
+            </main>
+            <script>
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({ type: "arkai:google-oauth", status: "success" }, "*");
+                    window.setTimeout(() => window.close(), 1200);
+                }
+            </script>
+        </body>
+        </html>
+        """
         
     except Exception as e:
         return f"<h3>OAuth Flow Failed:</h3><pre>{str(e)}</pre>", 500

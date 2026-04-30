@@ -187,6 +187,18 @@ def init_sqlite_fallback():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learner_roadmap_history (
+            user_id TEXT NOT NULL,
+            roadmap_id TEXT NOT NULL,
+            roadmap_json TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (user_id, roadmap_id)
+        )
+        """
+    )
 
     def ensure_column(table_name: str, column_name: str, column_definition: str) -> None:
         cur.execute(f"PRAGMA table_info({table_name})")
@@ -241,6 +253,9 @@ def _user_mastery_doc(db, user_id: str):
 
 def _user_roadmap_doc(db, user_id: str):
     return _user_doc(db, user_id).collection("roadmaps").document("current")
+
+def _user_roadmaps_collection(db, user_id: str):
+    return _user_doc(db, user_id).collection("roadmaps")
 
 
 def _user_progress_collection(db, user_id: str):
@@ -1456,12 +1471,22 @@ def _load_roadmap(user_id: str) -> dict[str, Any] | None:
 
 def _save_roadmap(user_id: str, roadmap: dict[str, Any]) -> None:
     roadmap["updated_at"] = _utc_now()
+    roadmap_id = str(roadmap.get("roadmap_id") or "").strip()
     db = get_firestore_client()
     if db:
         _user_roadmap_doc(db, user_id).set(
             {"roadmap": roadmap, "updated_at": roadmap["updated_at"]},
             merge=True,
         )
+        if roadmap_id:
+            _user_roadmaps_collection(db, user_id).document(roadmap_id).set(
+                {
+                    "roadmap": roadmap,
+                    "created_at": roadmap.get("created_at", roadmap["updated_at"]),
+                    "updated_at": roadmap["updated_at"],
+                },
+                merge=True,
+            )
         _touch_user_doc(db, user_id)
         return
 
@@ -1475,8 +1500,266 @@ def _save_roadmap(user_id: str, roadmap: dict[str, Any]) -> None:
         """,
         (user_id, json.dumps(roadmap), roadmap["updated_at"]),
     )
+    if roadmap_id:
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO learner_roadmap_history
+            (user_id, roadmap_id, roadmap_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                roadmap_id,
+                json.dumps(roadmap),
+                roadmap.get("created_at", roadmap["updated_at"]),
+                roadmap["updated_at"],
+            ),
+        )
     conn.commit()
     conn.close()
+
+
+def list_roadmaps(user_id: str) -> dict[str, Any]:
+    roadmaps: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    current = _load_roadmap(user_id)
+    current_id = str((current or {}).get("roadmap_id") or "").strip()
+
+    db = get_firestore_client()
+    if db:
+        for snapshot in _user_roadmaps_collection(db, user_id).stream():
+            if snapshot.id == "current":
+                continue
+            roadmap = (snapshot.to_dict() or {}).get("roadmap") or {}
+            roadmap_id = str(roadmap.get("roadmap_id") or snapshot.id).strip()
+            if roadmap_id == current_id:
+                continue
+            if roadmap and roadmap_id and roadmap_id not in seen_ids:
+                seen_ids.add(roadmap_id)
+                roadmaps.append(roadmap)
+    else:
+        init_sqlite_fallback()
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT roadmap_json
+            FROM learner_roadmap_history
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        for row in rows:
+            try:
+                roadmap = json.loads(row[0] or "{}")
+            except json.JSONDecodeError:
+                continue
+            roadmap_id = str(roadmap.get("roadmap_id") or "").strip()
+            if roadmap_id == current_id:
+                continue
+            if roadmap and roadmap_id and roadmap_id not in seen_ids:
+                seen_ids.add(roadmap_id)
+                roadmaps.append(roadmap)
+
+    roadmaps.sort(
+        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+    return {
+        "status": "success",
+        "roadmaps": [
+            {
+                "roadmap": roadmap,
+                "summary": _roadmap_summary(roadmap),
+                "is_current": str(roadmap.get("roadmap_id") or "") == current_id,
+            }
+            for roadmap in roadmaps
+        ],
+    }
+
+
+def delete_saved_roadmap(user_id: str, roadmap_id: str) -> dict[str, Any]:
+    normalized_roadmap_id = str(roadmap_id or "").strip()
+    if not normalized_roadmap_id:
+        return {"status": "error", "message": "Missing roadmap id."}
+
+    current = _load_roadmap(user_id) or {}
+    if str(current.get("roadmap_id") or "").strip() == normalized_roadmap_id:
+        return {
+            "status": "error",
+            "message": "This is your current roadmap. Use Delete on the current roadmap card instead.",
+        }
+
+    db = get_firestore_client()
+    if db:
+        doc = _user_roadmaps_collection(db, user_id).document(normalized_roadmap_id)
+        snapshot = doc.get()
+        if not snapshot.exists:
+            return {"status": "not_found", "message": "Saved roadmap not found."}
+        doc.delete()
+        _touch_user_doc(db, user_id)
+        return {"status": "success", "message": "Saved roadmap removed."}
+
+    init_sqlite_fallback()
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id = ?",
+        (user_id, normalized_roadmap_id),
+    )
+    deleted_count = cur.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted_count:
+        return {"status": "not_found", "message": "Saved roadmap not found."}
+    return {"status": "success", "message": "Saved roadmap removed."}
+
+
+def delete_all_saved_roadmaps(user_id: str) -> dict[str, Any]:
+    current = _load_roadmap(user_id) or {}
+    current_id = str(current.get("roadmap_id") or "").strip()
+    deleted_count = 0
+
+    db = get_firestore_client()
+    if db:
+        for snapshot in _user_roadmaps_collection(db, user_id).stream():
+            if snapshot.id == "current" or snapshot.id == current_id:
+                continue
+            roadmap = (snapshot.to_dict() or {}).get("roadmap") or {}
+            roadmap_id = str(roadmap.get("roadmap_id") or snapshot.id).strip()
+            if roadmap_id and roadmap_id == current_id:
+                continue
+            snapshot.reference.delete()
+            deleted_count += 1
+        if deleted_count:
+            _touch_user_doc(db, user_id)
+        return {
+            "status": "success",
+            "message": (
+                f"Deleted {deleted_count} saved roadmap{'s' if deleted_count != 1 else ''}."
+                if deleted_count
+                else "No previous saved roadmaps to delete."
+            ),
+        }
+
+    init_sqlite_fallback()
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    cur = conn.cursor()
+    if current_id:
+        cur.execute(
+            "DELETE FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id != ?",
+            (user_id, current_id),
+        )
+    else:
+        cur.execute("DELETE FROM learner_roadmap_history WHERE user_id = ?", (user_id,))
+    deleted_count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "status": "success",
+        "message": (
+            f"Deleted {deleted_count} saved roadmap{'s' if deleted_count != 1 else ''}."
+            if deleted_count
+            else "No previous saved roadmaps to delete."
+        ),
+    }
+
+
+def update_saved_roadmap_session(
+    user_id: str,
+    roadmap_id: str,
+    phase_id: str,
+    session_id: str,
+    status: str,
+) -> dict[str, Any]:
+    normalized_roadmap_id = str(roadmap_id or "").strip()
+    normalized_status = str(status or "").strip().lower()
+    if not normalized_roadmap_id:
+        return {"status": "error", "message": "Missing roadmap id."}
+    if normalized_status not in {"planned", "completed", "missed"}:
+        return {"status": "error", "message": "Invalid session status."}
+
+    current = _load_roadmap(user_id) or {}
+    if str(current.get("roadmap_id") or "").strip() == normalized_roadmap_id:
+        return update_roadmap_session(user_id, phase_id, session_id, normalized_status)
+
+    db = get_firestore_client()
+    if db:
+        doc = _user_roadmaps_collection(db, user_id).document(normalized_roadmap_id)
+        snapshot = doc.get()
+        if not snapshot.exists:
+            return {"status": "not_found", "message": "Saved roadmap not found."}
+        payload = snapshot.to_dict() or {}
+        roadmap = payload.get("roadmap") or {}
+    else:
+        init_sqlite_fallback()
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT roadmap_json FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id = ?",
+            (user_id, normalized_roadmap_id),
+        )
+        row = cur.fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return {"status": "not_found", "message": "Saved roadmap not found."}
+        try:
+            roadmap = json.loads(row[0])
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Saved roadmap data is unreadable."}
+
+    updated = False
+    for phase in roadmap.get("phases", []):
+        if phase.get("phase_id") != phase_id:
+            continue
+        for session in phase.get("sessions", []):
+            if session.get("session_id") == session_id:
+                session["status"] = normalized_status
+                updated = True
+                break
+        if updated:
+            break
+
+    if not updated:
+        return {"status": "error", "message": "Session not found."}
+
+    roadmap["updated_at"] = _utc_now()
+    summary = _roadmap_summary(roadmap)
+    roadmap["status"] = "completed" if summary["completion_rate"] >= 1 else "active"
+
+    if db:
+        doc.set(
+            {
+                "roadmap": roadmap,
+                "created_at": roadmap.get("created_at", roadmap["updated_at"]),
+                "updated_at": roadmap["updated_at"],
+            },
+            merge=True,
+        )
+        _touch_user_doc(db, user_id)
+    else:
+        conn = sqlite3.connect(SQLITE_DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE learner_roadmap_history
+            SET roadmap_json = ?, updated_at = ?
+            WHERE user_id = ? AND roadmap_id = ?
+            """,
+            (json.dumps(roadmap), roadmap["updated_at"], user_id, normalized_roadmap_id),
+        )
+        conn.commit()
+        conn.close()
+
+    return {
+        "status": "success",
+        "roadmap": roadmap,
+        "summary": summary,
+        "message": "Saved roadmap session updated.",
+    }
 
 
 def delete_roadmap(user_id: str) -> dict[str, Any]:
@@ -1485,15 +1768,32 @@ def delete_roadmap(user_id: str) -> dict[str, Any]:
         snapshot = _user_roadmap_doc(db, user_id).get()
         if not snapshot.exists:
             return {"status": "not_found", "message": "No roadmap found."}
+        roadmap = (snapshot.to_dict() or {}).get("roadmap") or {}
+        roadmap_id = str(roadmap.get("roadmap_id") or "").strip()
         _user_roadmap_doc(db, user_id).delete()
+        if roadmap_id:
+            _user_roadmaps_collection(db, user_id).document(roadmap_id).delete()
         _touch_user_doc(db, user_id)
         return {"status": "success", "message": "Roadmap deleted."}
 
     init_sqlite_fallback()
     conn = sqlite3.connect(SQLITE_DB_PATH)
     cur = conn.cursor()
+    cur.execute("SELECT roadmap_json FROM learner_roadmaps WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    roadmap_id = ""
+    if row:
+        try:
+            roadmap_id = str((json.loads(row[0] or "{}")).get("roadmap_id") or "").strip()
+        except json.JSONDecodeError:
+            roadmap_id = ""
     cur.execute("DELETE FROM learner_roadmaps WHERE user_id = ?", (user_id,))
     deleted_count = cur.rowcount
+    if roadmap_id:
+        cur.execute(
+            "DELETE FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id = ?",
+            (user_id, roadmap_id),
+        )
     conn.commit()
     conn.close()
     if not deleted_count:
@@ -1654,7 +1954,11 @@ def build_or_update_roadmap(
 
     recovery_mode = bool(recovery_mode_override) if recovery_mode_override is not None else False
     auto_reason = revision_reason
-    if current and not force_rebuild:
+    current_topic = str((current or {}).get("topic") or "").strip().lower()
+    requested_topic = str(normalized_topic or "").strip().lower()
+    is_new_topic_request = bool(current and requested_topic and requested_topic != current_topic)
+
+    if current and not force_rebuild and not is_new_topic_request:
         recovery_mode, auto_reason = _should_recover(current, weak_topics)
         if not recovery_mode:
             return {

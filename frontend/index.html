@@ -75,7 +75,11 @@
                     aria-label="Collapse sidebar" aria-pressed="false" title="Toggle sidebar">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M15 18 9 12l6-6"></path>
+                        <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+                        <path d="M9 3v18"></path>
+                        <path d="M14 8h4"></path>
+                        <path d="M14 12h4"></path>
+                        <path d="M14 16h4"></path>
                     </svg>
                 </button>
                 <nav class="sidebar-nav topbar-nav">
@@ -285,17 +289,21 @@
                                         Check your level, then build a plan.
                                     </div>
                                 </section>
-                                <section class="content-card panel-lite helper-card">
-                                    <div>
+                                <section class="content-card panel-lite helper-card roadmap-home-card">
+                                    <div class="roadmap-home-card-head">
+                                        <div>
                                         <p class="section-label">Current roadmap</p>
                                         <h4 id="roadmap-mode">No roadmap yet</h4>
+                                        </div>
+                                        <button id="previous-roadmaps-button" class="ghost-button mini-button"
+                                            type="button">Previous roadmaps</button>
                                     </div>
                                     <div id="roadmap-summary" class="state-summary">
                                         Your next session appears here.
                                     </div>
                                     <div class="inline-actions plan-card-actions">
                                         <button id="view-roadmap-button" class="ghost-button mini-button" type="button"
-                                            disabled>Open saved roadmap</button>
+                                            disabled>Open current roadmap</button>
                                         <button id="delete-roadmap-button"
                                             class="ghost-button mini-button subtle-action" type="button"
                                             disabled>Delete</button>
@@ -355,7 +363,7 @@
                                             <p class="section-label">Roadmap</p>
                                             <h3>Roadmap</h3>
                                             <p class="state-summary">Choose your topic, level, and study time. Create
-                                                saves the roadmap below.</p>
+                                                sets your current roadmap. Older roadmaps stay in Previous roadmaps.</p>
                                         </div>
                                         <div class="inline-actions plan-action-stack">
                                             <button id="generate-roadmap-button" class="primary-button"
@@ -437,17 +445,34 @@
                                 </button>
                                 <div class="roadmap-heading">
                                     <h3>Your study path</h3>
-                                    <div id="roadmap-status" class="assessment-status">Create your roadmap.
-                                    </div>
                                 </div>
                                 <div class="inline-actions roadmap-sync-actions">
+                                    <div id="roadmap-status" class="assessment-status">Create your roadmap.
+                                    </div>
                                     <button id="save-roadmap-tasks-button" class="ghost-button mini-button"
                                         type="button" disabled>Save to Google Tasks</button>
                                 </div>
                             </div>
-                            <div id="roadmap-session-detail" class="roadmap-session-detail nested-card">
-                                Choose a session to preview it here.
-                            </div>
+                            <div id="roadmap-session-detail" class="roadmap-session-detail nested-card hidden"></div>
+                            <section id="saved-roadmaps-panel" class="saved-roadmaps-panel nested-card hidden"
+                                aria-live="polite">
+                                <div class="saved-roadmaps-head">
+                                    <div>
+                                        <p class="section-label">Previous roadmaps</p>
+                                        <h4>Saved roadmap sessions</h4>
+                                    </div>
+                                    <div class="saved-roadmaps-toolbar">
+                                        <button id="delete-all-saved-roadmaps-button"
+                                            class="ghost-button mini-button subtle-action" type="button">Delete
+                                            all</button>
+                                        <button id="close-saved-roadmaps-button" class="ghost-button mini-button"
+                                            type="button">Close</button>
+                                    </div>
+                                </div>
+                                <div id="saved-roadmaps-list" class="saved-roadmaps-list">
+                                    <p class="mastery-empty">No previous roadmaps yet.</p>
+                                </div>
+                            </section>
                             <div id="roadmap-board" class="roadmap-board">
                                 <p class="mastery-empty">No roadmap yet.</p>
                             </div>

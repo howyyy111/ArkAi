@@ -137,12 +137,32 @@ def _user_google_token_path(user_id: str) -> Path:
     USER_GOOGLE_TOKENS_DIR.mkdir(parents=True, exist_ok=True)
     return USER_GOOGLE_TOKENS_DIR / f"{_safe_user_id_for_path(user_id)}.json"
 
+def _credentials_from_payload(payload: dict):
+    try:
+        return Credentials.from_authorized_user_info(payload, SCOPES)
+    except ValueError:
+        token = str(payload.get("token") or "").strip()
+        if not token:
+            raise
+        expiry = None
+        expiry_value = str(payload.get("expiry") or "").strip()
+        if expiry_value:
+            try:
+                expiry = datetime.datetime.fromisoformat(expiry_value.replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                expiry = None
+        return Credentials(
+            token=token,
+            scopes=payload.get("scopes") or SCOPES,
+            expiry=expiry,
+        )
+
 def _load_google_credentials_from_disk(user_id: str):
     path = _user_google_token_path(user_id)
     if path.is_file():
-        return Credentials.from_authorized_user_file(str(path), SCOPES)
+        return _credentials_from_payload(json.loads(path.read_text(encoding="utf-8")))
     if os.environ.get("ALLOW_LEGACY_SHARED_TOKEN") == "1" and TOKEN_PATH.is_file():
-        return Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        return _credentials_from_payload(json.loads(TOKEN_PATH.read_text(encoding="utf-8")))
     return None
 
 def _persist_google_credentials(user_id: str, creds: Credentials) -> None:
@@ -165,6 +185,33 @@ def _persist_google_credentials(user_id: str, creds: Credentials) -> None:
     else:
         path = _user_google_token_path(user_id)
         path.write_text(creds.to_json(), encoding="utf-8")
+
+def persist_google_access_token(user_id: str, access_token: str, expires_in: int | None = None) -> dict:
+    normalized_user_id = _normalize_oauth_user_id(user_id)
+    token = str(access_token or "").strip()
+    if not normalized_user_id:
+        return {"status": "error", "message": "Missing signed-in user."}
+    if not token:
+        return {"status": "error", "message": "Missing Google access token."}
+
+    expires_at = None
+    if expires_in:
+        try:
+            expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=max(60, int(expires_in)))
+        except (TypeError, ValueError):
+            expires_at = None
+
+    creds = Credentials(
+        token=token,
+        scopes=SCOPES,
+        expiry=expires_at,
+    )
+    _persist_google_credentials(normalized_user_id, creds)
+    return {
+        "status": "success",
+        "connected": True,
+        "message": "Google saves connected.",
+    }
 
 def _create_oauth_state(user_id: str) -> str:
     normalized_user_id = _normalize_oauth_user_id(user_id)
@@ -198,7 +245,7 @@ def google_oauth_status(user_id: str) -> dict:
         "message": "Google saves connected." if has_credentials else "Google saves are not connected.",
     }
 
-def get_google_authorization_url(user_id: str) -> dict:
+def get_google_authorization_url(user_id: str, force_reconnect: bool = False) -> dict:
     normalized_user_id = _normalize_oauth_user_id(user_id)
     if not normalized_user_id:
         return {"status": "error", "message": "Sign in before connecting Google saves."}
@@ -206,7 +253,7 @@ def get_google_authorization_url(user_id: str) -> dict:
         return {"status": "error", "message": "Sign in with Google before connecting Docs, Calendar, and Tasks."}
 
     existing = google_oauth_status(normalized_user_id)
-    if existing.get("connected"):
+    if existing.get("connected") and not force_reconnect:
         return {"status": "success", "connected": True, "message": "Google saves already connected."}
 
     if not db:
@@ -285,7 +332,7 @@ def get_google_credentials(user_id):
     if db:
         doc = _user_google_oauth_doc(normalized_user_id).get()
         if doc.exists:
-            creds = Credentials.from_authorized_user_info(doc.to_dict(), SCOPES)
+            creds = _credentials_from_payload(doc.to_dict() or {})
     else:
         creds = _load_google_credentials_from_disk(normalized_user_id)
 

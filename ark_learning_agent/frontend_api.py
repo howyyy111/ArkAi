@@ -39,6 +39,8 @@ from .learner_state import (
     delete_all_learning_history,
     delete_learning_history_item,
     delete_roadmap,
+    delete_all_saved_roadmaps,
+    delete_saved_roadmap,
     describe_learner_state,
     generate_weekly_report,
     get_evaluation_snapshot,
@@ -46,7 +48,9 @@ from .learner_state import (
     get_learner_state,
     get_mastery_snapshot,
     get_roadmap,
+    list_roadmaps,
     submit_assessment,
+    update_saved_roadmap_session,
     update_roadmap_session,
 )
 from .web_session_store import (
@@ -1156,6 +1160,53 @@ async def api_get_roadmap(request: Request, response: Response):
         response.status_code = HTTPStatus.NOT_FOUND
     return result
 
+@api_router.get("/api/roadmaps")
+async def api_list_roadmaps(request: Request, response: Response):
+    try:
+        context = await _resolve_request_context(request, response)
+    except PermissionError as exc:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={"error": str(exc)})
+    return await asyncio.to_thread(list_roadmaps, context["user_id"])
+
+@api_router.post("/api/roadmap/delete-saved")
+async def api_delete_saved_roadmap(request: Request, response: Response, payload: RoadmapDeleteSavedRequest):
+    context = await _resolve_context(request, response, payload)
+    result = await asyncio.to_thread(
+        delete_saved_roadmap,
+        context["user_id"],
+        str(payload.roadmapId or "").strip(),
+    )
+    if result.get("status") != "success":
+        response.status_code = HTTPStatus.BAD_REQUEST
+    return result
+
+@api_router.post("/api/roadmap/delete-all-saved")
+async def api_delete_all_saved_roadmaps(request: Request, response: Response, payload: ApiRequest):
+    context = await _resolve_context(request, response, payload)
+    result = await asyncio.to_thread(delete_all_saved_roadmaps, context["user_id"])
+    if result.get("status") != "success":
+        response.status_code = HTTPStatus.BAD_REQUEST
+    return result
+
+@api_router.post("/api/roadmap/saved-session/update")
+async def api_saved_roadmap_session_update(
+    request: Request,
+    response: Response,
+    payload: SavedRoadmapSessionUpdateRequest,
+):
+    context = await _resolve_context(request, response, payload)
+    result = await asyncio.to_thread(
+        update_saved_roadmap_session,
+        user_id=context["user_id"],
+        roadmap_id=str(payload.roadmapId or "").strip(),
+        phase_id=str(payload.phaseId or "").strip(),
+        session_id=str(payload.sessionId or "").strip(),
+        status=str(payload.status or "").strip(),
+    )
+    if result.get("status") != "success":
+        response.status_code = HTTPStatus.BAD_REQUEST
+    return result
+
 @api_router.get("/api/materials")
 async def api_materials(request: Request, response: Response):
     try:
@@ -1209,14 +1260,30 @@ async def api_google_status(request: Request, response: Response):
         context = await _resolve_request_context(request, response)
     except PermissionError as exc:
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={"error": str(exc)})
+    oauth_setup_ready = (BASE_DIR / "ark_learning_agent" / "credentials.json").is_file() and bool(_resolved_auth_callback_url())
+    firebase_token_connect_ready = _firebase_web_config() is not None
+    google_saves_setup_ready = oauth_setup_ready or firebase_token_connect_ready
     if context["is_anonymous"]:
         return {
             "status": "success",
             "connected": False,
+            "setup_ready": google_saves_setup_ready,
             "message": "Sign in with Google to connect saves.",
         }
     from .productivity_mcp_server import google_oauth_status
-    return await asyncio.to_thread(google_oauth_status, context["user_id"])
+    result = await asyncio.to_thread(google_oauth_status, context["user_id"])
+    if result.get("connected"):
+        result["setup_ready"] = google_saves_setup_ready
+        return result
+    if not google_saves_setup_ready:
+        return {
+            "status": "success",
+            "connected": False,
+            "setup_ready": False,
+            "message": "Google saves is not configured on this server.",
+        }
+    result["setup_ready"] = True
+    return result
 
 
 @api_router.post("/api/auth/session")
@@ -1280,8 +1347,37 @@ async def api_google_connect(request: Request, response: Response, payload: Goog
             "message": "Sign in with Google before connecting Docs, Calendar, and Tasks.",
         }
     from .productivity_mcp_server import get_google_authorization_url
-    result = await asyncio.to_thread(get_google_authorization_url, context["user_id"])
+    result = await asyncio.to_thread(
+        get_google_authorization_url,
+        context["user_id"],
+        bool(payload.forceReconnect),
+    )
     if result.get("status") not in {"success", "auth_required"}:
+        response.status_code = HTTPStatus.BAD_REQUEST
+    return result
+
+
+@api_router.post("/api/google/connect-token")
+async def api_google_connect_token(request: Request, response: Response, payload: GoogleTokenConnectRequest = None):
+    payload = payload or GoogleTokenConnectRequest()
+    try:
+        context = await _resolve_request_context(request, response, payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={"error": str(exc)})
+    if context["is_anonymous"]:
+        response.status_code = HTTPStatus.UNAUTHORIZED
+        return {
+            "status": "error",
+            "message": "Sign in with Google before connecting Docs, Calendar, and Tasks.",
+        }
+    from .productivity_mcp_server import persist_google_access_token
+    result = await asyncio.to_thread(
+        persist_google_access_token,
+        context["user_id"],
+        str(payload.accessToken or "").strip(),
+        payload.expiresIn,
+    )
+    if result.get("status") != "success":
         response.status_code = HTTPStatus.BAD_REQUEST
     return result
 
@@ -1667,10 +1763,16 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
             elif save_result.get("status") == "needs_time":
                 reply = save_result.get("message") or "Tell me a date and time for the calendar event."
             elif save_result.get("status") == "auth_required":
-                reply = (
-                    "Google saves is still not connected for the signed-in ArkAI account I can verify. "
-                    "Open the account menu, connect Google saves again, then retry."
-                )
+                if context["is_anonymous"]:
+                    reply = (
+                        "You are still using a private guest session, so I cannot save to Google Docs yet. "
+                        "Use Continue with Google first, then connect Google saves from the account menu and retry."
+                    )
+                else:
+                    reply = (
+                        "Google saves is still not connected for the signed-in ArkAI account I can verify. "
+                        "Open the account menu, connect Google saves again, then retry."
+                    )
             else:
                 reply = f"I could not complete that Google save: {save_result.get('message') or 'unknown error'}"
             await asyncio.to_thread(append_chat_message, 

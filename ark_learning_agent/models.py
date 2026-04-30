@@ -41,6 +41,14 @@ class RoadmapSessionUpdateRequest(ApiRequest):
     sessionId: Optional[str] = ""
     status: Optional[str] = ""
 
+class RoadmapDeleteSavedRequest(ApiRequest):
+    roadmapId: Optional[str] = ""
+
+class SavedRoadmapSessionUpdateRequest(RoadmapDeleteSavedRequest):
+    phaseId: Optional[str] = ""
+    sessionId: Optional[str] = ""
+    status: Optional[str] = ""
+
 class RoadmapSaveCalendarRequest(ApiRequest):
     title: Optional[str] = ""
     focus: Optional[str] = ""
@@ -89,4 +97,8 @@ class ChatRequest(ApiRequest):
     temporaryAttachments: Optional[List[Dict[str, Any]]] = None
 
 class GoogleConnectRequest(ApiRequest):
-    pass
+    forceReconnect: Optional[bool] = False
+
+class GoogleTokenConnectRequest(ApiRequest):
+    accessToken: Optional[str] = ""
+    expiresIn: Optional[int] = None

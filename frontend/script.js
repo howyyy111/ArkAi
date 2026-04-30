@@ -73,6 +73,11 @@ const roadmapSummary = document.getElementById("roadmap-summary");
 const roadmapSessionDetail = document.getElementById("roadmap-session-detail");
 const roadmapBoard = document.getElementById("roadmap-board");
 const viewRoadmapButton = document.getElementById("view-roadmap-button");
+const previousRoadmapsButton = document.getElementById("previous-roadmaps-button");
+const savedRoadmapsPanel = document.getElementById("saved-roadmaps-panel");
+const savedRoadmapsList = document.getElementById("saved-roadmaps-list");
+const closeSavedRoadmapsButton = document.getElementById("close-saved-roadmaps-button");
+const deleteAllSavedRoadmapsButton = document.getElementById("delete-all-saved-roadmaps-button");
 const deleteRoadmapButton = document.getElementById("delete-roadmap-button");
 const saveRoadmapTasksButton = document.getElementById("save-roadmap-tasks-button");
 const materialFileInput = document.getElementById("material-file");
@@ -114,6 +119,14 @@ const historyStorageKeyPrefix = "arkai-history-";
 const activeViewStorageKey = "arkai-active-view";
 const sidebarCollapsedStorageKey = "arkai-sidebar-collapsed";
 const requestTimeoutMs = 90000;
+const googleSavesPollIntervalMs = 2500;
+const googleSavesPollTimeoutMs = 120000;
+const googleSavesScopes = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/tasks",
+  "https://www.googleapis.com/auth/documents",
+  "https://www.googleapis.com/auth/drive.file",
+];
 const maxMaterialFileSizeBytes = 5 * 1024 * 1024;
 const maxMaterialLibrarySizeBytes = 25 * 1024 * 1024;
 const maxTutorAttachmentCount = 3;
@@ -134,12 +147,18 @@ let latestLearnerState = null;
 let latestMaterials = [];
 let latestInterventionPlan = null;
 let latestWeeklyReport = null;
+let latestSavedRoadmaps = [];
+let selectedSavedRoadmapId = "";
 let selectedRoadmapSessionKey = "";
+let currentRoadmapDetailsExpanded = false;
 let previousSessionsExpanded = false;
 let selectedHistoryItemKey = "";
 let previousResourcesExpanded = false;
 let latestChatSessions = [];
 let pendingTutorAttachments = [];
+let googleSavesConnected = false;
+let googleSavesConnectionInProgress = false;
+let googleSavesSetupReady = true;
 let activeSession = {
   userId: "",
   sessionId: "",
@@ -540,6 +559,9 @@ function showPlanWorkspace(workspace = "home") {
   planHome?.classList.toggle("hidden", target !== "home");
   diagnosticWorkspace?.classList.toggle("hidden", target !== "diagnostic");
   roadmapWorkspace?.classList.toggle("hidden", target !== "roadmap");
+  if (target !== "roadmap") {
+    roadmapWorkspace?.classList.remove("showing-previous-roadmaps");
+  }
 }
 
 function showInsightsWorkspace(workspace = "home") {
@@ -602,6 +624,7 @@ function autoresizePrompt() {
 }
 
 async function clearSessionState() {
+  setVoiceStatus("");
   const previousUserId = getUsername() || "anonymous";
   const previousSessionId = getSessionId();
   if (previousSessionId) {
@@ -707,7 +730,9 @@ async function deleteAllChatSessionsFromHistory() {
   }
 
   await clearSessionState();
-  setVoiceStatus(data.message || "Saved chats deleted.");
+  if (historyListModal) {
+    historyListModal.innerHTML = `<p class="mastery-empty">${escapeHtml(data.message || "Saved chats deleted.")}</p>`;
+  }
 }
 
 async function openAccountSwitcher() {
@@ -875,18 +900,25 @@ function syncSessionChrome() {
 }
 
 function setGoogleSavesStatus(text, connected = false) {
+  googleSavesConnected = Boolean(connected);
   if (googleSavesStatus) {
     googleSavesStatus.textContent = text;
   }
   if (connectGoogleSavesButton) {
-    connectGoogleSavesButton.textContent = connected ? "Reconnect" : "Connect";
-    connectGoogleSavesButton.disabled = Boolean(activeSession.isAnonymous) || authMode !== "firebase";
+    connectGoogleSavesButton.textContent = googleSavesConnectionInProgress
+      ? "Connecting..."
+      : connected ? "Reconnect" : "Connect";
+    connectGoogleSavesButton.disabled =
+      googleSavesConnectionInProgress
+      || !googleSavesSetupReady
+      || Boolean(activeSession.isAnonymous)
+      || authMode !== "firebase";
   }
 }
 
 async function refreshGoogleSavesStatus() {
   if (activeSession.isAnonymous) {
-    setGoogleSavesStatus("Sign in first", false);
+    setGoogleSavesStatus("Sign in with Google first", false);
     return { connected: false };
   }
   try {
@@ -895,7 +927,12 @@ async function refreshGoogleSavesStatus() {
     if (!response.ok || data.status !== "success") {
       throw new Error(data.error || data.message || "Could not check Google saves.");
     }
-    setGoogleSavesStatus(data.connected ? "Connected" : "Not connected", Boolean(data.connected));
+    googleSavesSetupReady = data.setup_ready !== false;
+    if (!googleSavesSetupReady) {
+      setGoogleSavesStatus(data.message || "Google saves is not configured", false);
+      return data;
+    }
+    setGoogleSavesStatus(data.connected ? "Connected to Google saves" : "Not connected yet", Boolean(data.connected));
     return data;
   } catch (error) {
     setGoogleSavesStatus("Check failed", false);
@@ -903,7 +940,88 @@ async function refreshGoogleSavesStatus() {
   }
 }
 
-async function connectGoogleSaves({ askFirst = true } = {}) {
+async function waitForGoogleSavesConnection(authWindow) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < googleSavesPollTimeoutMs) {
+    const status = await refreshGoogleSavesStatus();
+    if (status.connected) {
+      if (authWindow && !authWindow.closed) {
+        authWindow.close();
+      }
+      authHelper.textContent = "Google saves connected. Docs, Calendar, and Tasks are ready.";
+      return status;
+    }
+    if (authWindow?.closed) {
+      authHelper.textContent = "Google permission window closed before ArkAI could confirm the connection.";
+      return status;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, googleSavesPollIntervalMs));
+  }
+  authHelper.textContent = "Still waiting for Google. If you finished the permission screen, try Connect again to refresh the status.";
+  return { connected: false };
+}
+
+async function connectGoogleSavesWithAccessToken(accessToken, { expiresIn = null } = {}) {
+  const token = String(accessToken || "").trim();
+  if (!token) {
+    throw new Error("Google did not return a saves permission token. Try Connect again and approve the requested permissions.");
+  }
+  const response = await fetch("/api/google/connect-token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      accessToken: token,
+      expiresIn,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not connect Google saves.");
+  }
+  setGoogleSavesStatus("Connected to Google saves", true);
+  authHelper.textContent = "Google saves connected. Docs, Calendar, and Tasks are ready.";
+  return data;
+}
+
+async function connectGoogleSavesWithFirebasePopup({ askFirst = true } = {}) {
+  if (!firebaseAuthClient || !googleProvider) {
+    throw new Error("Google Sign-In is not ready yet.");
+  }
+  if (askFirst) {
+    const approved = window.confirm(
+      "Connect Google saves for this ArkAI account? Google will ask permission for Docs, Drive, Tasks, and Calendar saves."
+    );
+    if (!approved) {
+      return { connected: false };
+    }
+  }
+  googleSavesConnectionInProgress = true;
+  setGoogleSavesStatus("Opening Google permission screen...", false);
+  try {
+    const result = await signInWithPopup(firebaseAuthClient, googleProvider);
+    if (result?.user) {
+      const idToken = await result.user.getIdToken();
+      await createServerSession(idToken);
+      updateAuthPill(result.user.email || activeSession.displayName || "Signed in", false);
+    }
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    await connectGoogleSavesWithAccessToken(credential?.accessToken || "");
+    return { connected: true };
+  } finally {
+    googleSavesConnectionInProgress = false;
+    await refreshGoogleSavesStatus();
+  }
+}
+
+async function connectGoogleSaves({ askFirst = true, forceReconnect = false } = {}) {
+  if (!googleSavesSetupReady) {
+    authHelper.textContent = "Google saves is not configured on this server. Add the OAuth client credentials and callback URL, then restart ArkAI.";
+    setGoogleSavesStatus("Google saves not configured", false);
+    return;
+  }
   if (activeSession.isAnonymous) {
     authHelper.textContent = "Sign in with Google before connecting Docs, Calendar, and Tasks.";
     openUsernameModal(false);
@@ -911,7 +1029,7 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
   }
   if (askFirst) {
     const approved = window.confirm(
-      "Allow ArkAI to save your study outputs to Google Docs, Calendar, and Tasks for this signed-in account?"
+      "Connect Google saves for this ArkAI account? ArkAI will ask Google for permission to create study docs, tasks, and calendar events when you request them."
     );
     if (!approved) {
       setGoogleSavesStatus("Not connected", false);
@@ -925,9 +1043,9 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
     authWindow.document.body.innerHTML = "<p style=\"font-family: system-ui, sans-serif; padding: 24px;\">Opening Google permission screen...</p>";
   }
 
-  connectGoogleSavesButton.disabled = true;
+  googleSavesConnectionInProgress = true;
   const oldText = connectGoogleSavesButton.textContent;
-  connectGoogleSavesButton.textContent = "Connecting...";
+  setGoogleSavesStatus("Opening Google permission screen...", false);
   try {
     const response = await fetch("/api/google/connect", {
       method: "POST",
@@ -935,10 +1053,14 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
         "Content-Type": "application/json",
         ...buildAuthHeaders(),
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ forceReconnect }),
     });
     const data = await response.json();
     if (!response.ok || !["success", "auth_required"].includes(data.status)) {
+      if (String(data.message || "").includes("credentials.json") || String(data.message || "").includes("AUTH_CALLBACK_URL")) {
+        await connectGoogleSavesWithFirebasePopup({ askFirst: false });
+        return;
+      }
       throw new Error(data.error || data.message || "Could not connect Google saves.");
     }
     if (data.status === "success" && data.connected) {
@@ -946,6 +1068,7 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
         authWindow.close();
       }
       setGoogleSavesStatus("Connected", true);
+      authHelper.textContent = "Google saves connected. Docs, Calendar, and Tasks are ready.";
       return;
     }
     const authUrl = String(data.authorization_url || "").trim();
@@ -956,8 +1079,10 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
       authWindow.location.href = authUrl;
     } else {
       window.location.assign(authUrl);
+      return;
     }
-    setGoogleSavesStatus("Finish in Google", false);
+    setGoogleSavesStatus("Finish permission in Google", false);
+    await waitForGoogleSavesConnection(authWindow);
   } catch (error) {
     if (authWindow && !authWindow.closed) {
       authWindow.close();
@@ -965,12 +1090,28 @@ async function connectGoogleSaves({ askFirst = true } = {}) {
     setGoogleSavesStatus("Not connected", false);
     authHelper.textContent = error.message;
   } finally {
-    connectGoogleSavesButton.disabled = false;
-    if (connectGoogleSavesButton.textContent === "Connecting...") {
+    googleSavesConnectionInProgress = false;
+    if (connectGoogleSavesButton.textContent === "Connecting..." || connectGoogleSavesButton.textContent === oldText) {
       connectGoogleSavesButton.textContent = oldText;
     }
+    await refreshGoogleSavesStatus();
   }
 }
+
+window.addEventListener("message", (event) => {
+  const payload = event.data || {};
+  if (payload.type !== "arkai:google-oauth") {
+    return;
+  }
+  if (payload.status === "success") {
+    authHelper.textContent = "Google confirmed permission. Checking connection...";
+    refreshGoogleSavesStatus().then((status) => {
+      if (status.connected) {
+        authHelper.textContent = "Google saves connected. Docs, Calendar, and Tasks are ready.";
+      }
+    });
+  }
+});
 
 function handleGoogleSaveAuthRequired(message, statusNode) {
   const text = message || "Connect Google saves from the account menu first.";
@@ -979,6 +1120,51 @@ function handleGoogleSaveAuthRequired(message, statusNode) {
   }
   setGoogleSavesStatus("Not connected", false);
   toggleProfileDropdown(true);
+}
+
+function isGoogleSavePrompt(value) {
+  const text = String(value || "").toLowerCase();
+  if (!text.includes("save")) {
+    return false;
+  }
+  return [
+    "google doc",
+    "google docs",
+    "google drive",
+    "drive",
+    "google task",
+    "google tasks",
+    "task",
+    "tasks",
+    "todo",
+    "to-do",
+    "google calendar",
+    "google calender",
+    "calendar",
+    "calender",
+    "gcal",
+  ].some((phrase) => text.includes(phrase));
+}
+
+function requestGoogleSaveSetupFromChat() {
+  if (activeSession.isAnonymous) {
+    appendMessage(
+      "agent",
+      "You are still in a private guest session, so I cannot save to Google yet. Use Continue with Google first, then connect Google saves from the account menu."
+    );
+    openUsernameModal(false);
+    return false;
+  }
+  if (!googleSavesConnected) {
+    appendMessage(
+      "agent",
+      "Your ArkAI account is signed in, but Google saves is not connected yet. Open the account menu and press Connect under Google saves, then try the save again."
+    );
+    toggleProfileDropdown(true);
+    refreshGoogleSavesStatus();
+    return false;
+  }
+  return true;
 }
 
 function closeProfileDropdown() {
@@ -1320,6 +1506,14 @@ function findRoadmapSessionByTopic(roadmap, topic) {
   return null;
 }
 
+function findSavedRoadmapItem(roadmapId) {
+  const normalizedRoadmapId = String(roadmapId || "").trim();
+  return latestSavedRoadmaps.find((item) => {
+    const roadmap = item.roadmap || item;
+    return String(roadmap?.roadmap_id || "").trim() === normalizedRoadmapId;
+  }) || null;
+}
+
 function findNextRoadmapSession(roadmap) {
   for (const phase of roadmap?.phases || []) {
     for (const session of phase.sessions || []) {
@@ -1329,6 +1523,314 @@ function findNextRoadmapSession(roadmap) {
     }
   }
   return null;
+}
+
+function roadmapDisplayTitle(roadmap) {
+  return String(roadmap?.topic || roadmap?.goal || "Saved roadmap").trim() || "Saved roadmap";
+}
+
+function roadmapShortDescription(roadmap, summary = {}) {
+  const total = Number(summary.total_sessions || 0);
+  const phaseCount = Number(summary.phase_count || roadmap?.phases?.length || 0);
+  const days = Number(roadmap?.deadline_days || 0);
+  const level = String(roadmap?.level || "beginner").trim();
+  const bits = [];
+  if (level) {
+    bits.push(`${level.charAt(0).toUpperCase()}${level.slice(1)} plan`);
+  }
+  if (total) {
+    bits.push(`${total} study sessions`);
+  }
+  if (phaseCount) {
+    bits.push(`${phaseCount} phases`);
+  }
+  if (days) {
+    bits.push(`${days} days`);
+  }
+  return bits.join(" • ") || "Saved study plan";
+}
+
+function renderRoadmapReadOnlyDetails(roadmap) {
+  return (roadmap?.phases || [])
+    .map((phase, phaseIndex) => `
+      <section class="saved-roadmap-phase">
+        <div class="saved-roadmap-phase-head">
+          <div class="saved-roadmap-phase-index">${escapeHtml(String(phaseIndex + 1).padStart(2, "0"))}</div>
+          <div>
+            <p class="section-label">${escapeHtml(phase.title || "Phase")}</p>
+            <h5>${escapeHtml(phase.goal || "Study phase")}</h5>
+            ${phase.expected_outcome ? `<p>${escapeHtml(phase.expected_outcome)}</p>` : ""}
+          </div>
+        </div>
+        <div class="saved-roadmap-sessions">
+          ${(phase.sessions || []).map((session) => `
+            <article class="saved-roadmap-session" data-session-status="${escapeHtml(normalizeRoadmapStatus(session.status))}">
+              <div>
+                <strong>${escapeHtml(session.title || "Study session")}</strong>
+                <p>${escapeHtml(session.focus || roadmapDisplayTitle(roadmap))} • ${escapeHtml(session.duration_minutes || 45)} min</p>
+                ${session.due_date ? `<span>Due ${escapeHtml(session.due_date)}</span>` : ""}
+              </div>
+              <div class="saved-roadmap-session-actions">
+                <span class="status-pill status-${escapeHtml(normalizeRoadmapStatus(session.status))}">${escapeHtml(session.status || "planned")}</span>
+                <button
+                  class="mini-button"
+                  type="button"
+                  data-open-saved-session="true"
+                  data-session-title="${escapeHtml(session.title || "Study session")}"
+                  data-session-focus="${escapeHtml(session.focus || "")}"
+                  data-session-duration="${escapeHtml(session.duration_minutes || "")}"
+                  data-phase-title="${escapeHtml(phase.title || "")}"
+                  data-phase-goal="${escapeHtml(phase.goal || "")}"
+                >
+                  Open in Tutor
+                </button>
+                <button class="mini-button${normalizeRoadmapStatus(session.status) === "completed" ? " is-active-status" : ""}" type="button" data-saved-session-status="completed" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Complete</button>
+                <button class="mini-button${normalizeRoadmapStatus(session.status) === "planned" ? " is-active-status" : ""}" type="button" data-saved-session-status="planned" data-roadmap-id="${escapeHtml(roadmap.roadmap_id || "")}" data-phase-id="${escapeHtml(phase.phase_id || "")}" data-session-id="${escapeHtml(session.session_id || "")}">Need to do</button>
+                <button
+                  class="mini-button"
+                  type="button"
+                  data-remind-saved-session="true"
+                  data-session-title="${escapeHtml(session.title || "Study session")}"
+                  data-session-focus="${escapeHtml(session.focus || "")}"
+                  data-session-duration="${escapeHtml(session.duration_minutes || 45)}"
+                  data-session-due="${escapeHtml(session.due_date || "")}"
+                  data-phase-title="${escapeHtml(phase.title || "")}"
+                  data-phase-goal="${escapeHtml(phase.goal || "")}"
+                >
+                  Remind me
+                </button>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+}
+
+function renderSavedRoadmapDetail(item) {
+  const roadmap = item?.roadmap || item;
+  const summary = item?.summary || {};
+  const title = roadmapDisplayTitle(roadmap);
+  const completed = Number(summary.completed_sessions || 0);
+  const total = Number(summary.total_sessions || 0);
+  const progressText = total ? `${completed}/${total} sessions complete` : "No sessions counted yet";
+  const description = roadmapShortDescription(roadmap, summary);
+
+  savedRoadmapsList.innerHTML = `
+    <article class="saved-roadmap-detail-page">
+      <div class="saved-roadmap-detail-hero">
+        <button class="ghost-button mini-button" type="button" data-back-to-saved-roadmaps="true">Back</button>
+        <div>
+          <p class="section-label">Saved roadmap</p>
+          <h4>${escapeHtml(title)} roadmap</h4>
+          <p>${escapeHtml(roadmap.goal || "Saved study plan")}</p>
+        </div>
+        <div class="saved-roadmap-detail-meta">
+          <span>${escapeHtml(description)}</span>
+          <strong>${escapeHtml(progressText)}</strong>
+        </div>
+      </div>
+      <div class="saved-roadmap-body">
+        ${renderRoadmapReadOnlyDetails(roadmap)}
+      </div>
+    </article>
+  `;
+}
+
+function renderSavedRoadmaps(roadmapItems = latestSavedRoadmaps) {
+  if (!savedRoadmapsList || !savedRoadmapsPanel) {
+    return;
+  }
+  latestSavedRoadmaps = (Array.isArray(roadmapItems) ? roadmapItems : []).filter((item) => !item?.is_current);
+  const selectedItem = selectedSavedRoadmapId ? findSavedRoadmapItem(selectedSavedRoadmapId) : null;
+  if (selectedItem) {
+    renderSavedRoadmapDetail(selectedItem);
+    return;
+  }
+  selectedSavedRoadmapId = "";
+  if (!latestSavedRoadmaps.length) {
+    savedRoadmapsList.innerHTML = `<p class="mastery-empty">No previous roadmaps yet. Create another topic roadmap and earlier roadmaps will appear here.</p>`;
+    return;
+  }
+
+  savedRoadmapsList.innerHTML = latestSavedRoadmaps
+    .map((item) => {
+      const roadmap = item.roadmap || item;
+      const summary = item.summary || {};
+      const title = roadmapDisplayTitle(roadmap);
+      const roadmapId = String(roadmap.roadmap_id || "").trim();
+      const completed = Number(summary.completed_sessions || 0);
+      const total = Number(summary.total_sessions || 0);
+      const updated = roadmap.updated_at || roadmap.created_at || "";
+      const progressText = total ? `${completed}/${total} sessions complete` : "No sessions counted yet";
+      const description = roadmapShortDescription(roadmap, summary);
+      return `
+        <article class="saved-roadmap-item" data-saved-roadmap-card="${escapeHtml(roadmapId)}">
+          <div class="saved-roadmap-overview">
+            <div>
+              <strong>${escapeHtml(title)} roadmap</strong>
+              <span>${escapeHtml(description)}</span>
+              <p>${escapeHtml(roadmap.goal || "Saved study plan")}</p>
+            </div>
+            <div class="saved-roadmap-meta">
+              ${updated ? `<time>${escapeHtml(String(updated).slice(0, 10))}</time>` : ""}
+              <span>${escapeHtml(progressText)}</span>
+            </div>
+          </div>
+          <div class="saved-roadmap-actions">
+            ${roadmapId ? `
+              <button class="ghost-button mini-button" type="button" data-view-saved-roadmap="${escapeHtml(roadmapId)}">
+                View details
+              </button>
+              <button class="saved-roadmap-delete-icon" type="button" data-delete-saved-roadmap="${escapeHtml(roadmapId)}" aria-label="Delete ${escapeHtml(title)} roadmap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 6h18"></path>
+                  <path d="M8 6V4h8v2"></path>
+                  <path d="M19 6l-1 14H6L5 6"></path>
+                  <path d="M10 11v5"></path>
+                  <path d="M14 11v5"></path>
+                </svg>
+              </button>
+            ` : ""}
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function refreshSavedRoadmaps({ showPanel = false } = {}) {
+  if (showPanel && savedRoadmapsPanel) {
+    roadmapWorkspace?.classList.add("showing-previous-roadmaps");
+    savedRoadmapsPanel.classList.remove("hidden");
+    roadmapWorkspace?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  const username = getUsername();
+  if (!username) {
+    latestSavedRoadmaps = [];
+    renderSavedRoadmaps([]);
+    return;
+  }
+  try {
+    const response = await fetch(`/api/roadmaps?userId=${encodeURIComponent(username)}`, {
+      headers: buildAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not load saved roadmaps.");
+    }
+    renderSavedRoadmaps(data.roadmaps || []);
+  } catch (error) {
+    if (savedRoadmapsList) {
+      savedRoadmapsList.innerHTML = `<p class="mastery-empty">${escapeHtml(error.message || "Could not load saved roadmaps.")}</p>`;
+    }
+  }
+}
+
+async function deleteSavedRoadmap(roadmapId) {
+  const normalizedRoadmapId = String(roadmapId || "").trim();
+  const username = getUsername();
+  if (!normalizedRoadmapId || !username) {
+    return;
+  }
+  const confirmed = window.confirm("Remove this previous saved roadmap? Your current roadmap will not be changed.");
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch("/api/roadmap/delete-saved", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      userId: username,
+      idToken: getIdToken(),
+      roadmapId: normalizedRoadmapId,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not remove saved roadmap.");
+  }
+  if (roadmapStatus) {
+    roadmapStatus.textContent = data.message || "Saved roadmap removed.";
+  }
+  await refreshSavedRoadmaps({ showPanel: true });
+}
+
+async function deleteAllSavedRoadmaps() {
+  const username = getUsername();
+  if (!username || !latestSavedRoadmaps.length) {
+    return;
+  }
+  const confirmed = window.confirm("Delete all previous saved roadmaps? Your current roadmap will not be changed.");
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch("/api/roadmap/delete-all-saved", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(),
+    },
+    body: JSON.stringify({
+      userId: username,
+      idToken: getIdToken(),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.status !== "success") {
+    throw new Error(data.error || data.message || "Could not delete saved roadmaps.");
+  }
+  selectedSavedRoadmapId = "";
+  if (roadmapStatus) {
+    roadmapStatus.textContent = data.message || "Saved roadmaps deleted.";
+  }
+  await refreshSavedRoadmaps({ showPanel: true });
+}
+
+async function updateSavedRoadmapSessionStatus(button) {
+  const username = getUsername();
+  if (!username) {
+    return;
+  }
+  button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Saving...";
+  try {
+    const response = await fetch("/api/roadmap/saved-session/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        roadmapId: button.dataset.roadmapId,
+        phaseId: button.dataset.phaseId,
+        sessionId: button.dataset.sessionId,
+        status: button.dataset.savedSessionStatus,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "success") {
+      throw new Error(data.error || data.message || "Could not update saved roadmap session.");
+    }
+    if (roadmapStatus) {
+      roadmapStatus.textContent = data.message || "Saved session updated.";
+    }
+    await refreshSavedRoadmaps({ showPanel: true });
+  } catch (error) {
+    if (roadmapStatus) {
+      roadmapStatus.textContent = error.message || "Could not update saved roadmap session.";
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
 }
 
 function buildStudyPrompt(session) {
@@ -1407,8 +1909,11 @@ async function updateRoadmapSessionStatus(button) {
 }
 
 function renderRoadmapSessionDetail(session) {
+  if (!roadmapSessionDetail) {
+    return;
+  }
   if (!session) {
-    roadmapSessionDetail.innerHTML = "Choose a session to preview it here.";
+    roadmapSessionDetail.innerHTML = "";
     return;
   }
 
@@ -1479,6 +1984,65 @@ function renderRoadmapSessionDetail(session) {
   `;
 }
 
+function renderCurrentRoadmapSummaryCard(roadmap, summary) {
+  const title = roadmapDisplayTitle(roadmap);
+  const progressText =
+    `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
+    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+  const description = roadmapShortDescription(roadmap, summary);
+  const detailsId = "current-roadmap-details";
+  return `
+    <section class="current-roadmap-card">
+      <div class="current-roadmap-card-main">
+        <div>
+          <p class="section-label">Current roadmap</p>
+          <h4>${escapeHtml(title)} roadmap</h4>
+          <p>${escapeHtml(roadmap.goal || "Your active study plan")}</p>
+        </div>
+        <div class="current-roadmap-card-meta">
+          <span>${escapeHtml(description)}</span>
+          <strong>${escapeHtml(progressText)}</strong>
+        </div>
+      </div>
+      <button
+        class="ghost-button mini-button"
+        type="button"
+        data-toggle-current-roadmap="true"
+        aria-controls="${detailsId}"
+        aria-expanded="${currentRoadmapDetailsExpanded ? "true" : "false"}"
+      >
+        ${currentRoadmapDetailsExpanded ? "Hide roadmap details" : "View roadmap details"}
+      </button>
+    </section>
+  `;
+}
+
+function renderCurrentRoadmapDetailsHeader(roadmap, summary) {
+  const title = roadmapDisplayTitle(roadmap);
+  const progressText =
+    `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
+    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+  return `
+    <div class="current-roadmap-detail-bar">
+      <div>
+        <p class="section-label">Current roadmap</p>
+        <h4>${escapeHtml(title)} roadmap</h4>
+      </div>
+      <div class="current-roadmap-detail-actions">
+        <span>${escapeHtml(progressText)}</span>
+        <button
+          class="ghost-button mini-button"
+          type="button"
+          data-toggle-current-roadmap="true"
+          aria-expanded="true"
+        >
+          Hide details
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function renderRoadmap(roadmapResult) {
   const roadmap = roadmapResult?.roadmap || null;
   const summary = roadmapResult?.summary || null;
@@ -1492,6 +2056,9 @@ function renderRoadmap(roadmapResult) {
     if (viewRoadmapButton) {
       viewRoadmapButton.disabled = true;
     }
+    if (previousRoadmapsButton) {
+      previousRoadmapsButton.disabled = false;
+    }
     if (deleteRoadmapButton) {
       deleteRoadmapButton.disabled = true;
     }
@@ -1501,7 +2068,8 @@ function renderRoadmap(roadmapResult) {
     if (saveRoadmapTasksButton) {
       saveRoadmapTasksButton.disabled = true;
     }
-    renderRoadmapSessionDetail(getActiveSessionDetail());
+    currentRoadmapDetailsExpanded = false;
+    renderRoadmapSessionDetail(null);
     roadmapBoard.innerHTML = `<p class="mastery-empty">No roadmap yet.</p>`;
     return;
   }
@@ -1518,14 +2086,11 @@ function renderRoadmap(roadmapResult) {
   if (saveRoadmapTasksButton) {
     saveRoadmapTasksButton.disabled = false;
   }
+  if (roadmapStatus && /^create your roadmap/i.test(String(roadmapStatus.textContent || "").trim())) {
+    roadmapStatus.textContent = "Current roadmap loaded.";
+  }
 
   const nextRoadmapSession = findNextRoadmapSession(roadmap);
-  const selectedSession =
-    findRoadmapSessionByKey(roadmap, selectedRoadmapSessionKey)
-    || nextRoadmapSession
-    || findFirstRoadmapSession(roadmap);
-
-  selectedRoadmapSessionKey = selectedSession?.key || "";
   roadmapMode.textContent = `${summary.mode} roadmap`;
   const progressText =
     `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
@@ -1544,36 +2109,36 @@ function renderRoadmap(roadmapResult) {
     roadmapSummary.innerHTML = `<p class="roadmap-progress-copy">${escapeHtml(progressText)} • All sessions are done.</p>`;
   }
 
-  roadmapBoard.innerHTML = roadmap.phases
+  const phasesMarkup = roadmap.phases
     .map((phase) => {
       const sessionsMarkup = (phase.sessions || [])
         .map((session) => {
           const sessionKey = buildRoadmapSessionKey(phase.phase_id, session.session_id);
           const status = normalizeRoadmapStatus(session.status);
-          const isSelected = sessionKey === selectedRoadmapSessionKey;
           return `
             <article
-              class="roadmap-session${isSelected ? " is-selected" : ""}"
-              tabindex="0"
-              role="button"
-              aria-label="Open ${escapeHtml(session.title)} brief"
-              data-preview-session="true"
+              class="roadmap-session"
               data-session-key="${escapeHtml(sessionKey)}"
               data-session-status="${escapeHtml(status)}"
             >
               <div>
                 <strong>${escapeHtml(session.title)}</strong>
-                <p>${session.focus} • ${session.duration_minutes} min • due ${session.due_date}</p>
+                <p>${escapeHtml(session.focus || roadmapDisplayTitle(roadmap))} • ${escapeHtml(session.duration_minutes || 45)} min • due ${escapeHtml(session.due_date || "")}</p>
                 <p class="roadmap-session-status">${escapeHtml(session.status || "planned")}</p>
               </div>
               <div class="roadmap-session-actions">
                 <button
                   class="mini-button"
                   type="button"
-                  data-preview-session="true"
+                  data-open-session="true"
                   data-session-key="${escapeHtml(sessionKey)}"
+                  data-session-title="${escapeHtml(session.title)}"
+                  data-session-focus="${escapeHtml(session.focus || "")}"
+                  data-session-duration="${escapeHtml(session.duration_minutes || "")}"
+                  data-phase-title="${escapeHtml(phase.title || "")}"
+                  data-phase-goal="${escapeHtml(phase.goal || "")}"
                 >
-                  Preview
+                  Open in Tutor
                 </button>
                 <button class="mini-button${status === "completed" ? " is-active-status" : ""}" type="button" data-phase-id="${escapeHtml(phase.phase_id)}" data-session-id="${escapeHtml(session.session_id)}" data-status="completed">Complete</button>
                 <button class="mini-button${status === "missed" ? " is-active-status" : ""}" type="button" data-phase-id="${escapeHtml(phase.phase_id)}" data-session-id="${escapeHtml(session.session_id)}" data-status="missed">Missed</button>
@@ -1587,22 +2152,30 @@ function renderRoadmap(roadmapResult) {
         <section class="roadmap-phase">
           <div class="roadmap-phase-header">
             <div>
-              <p class="section-label">${phase.title}</p>
-              <h5>${phase.goal}</h5>
+              <p class="section-label">${escapeHtml(phase.title || "Phase")}</p>
+              <h5>${escapeHtml(phase.goal || "Study phase")}</h5>
             </div>
             <div class="roadmap-kicker">
-              ${phase.checkpoint_type}<br />
-              due ${phase.checkpoint_due_date}
+              ${escapeHtml(phase.checkpoint_type || "checkpoint")}<br />
+              due ${escapeHtml(phase.checkpoint_due_date || "")}
             </div>
           </div>
-          <p>${phase.expected_outcome}</p>
+          <p>${escapeHtml(phase.expected_outcome || "")}</p>
           <div class="roadmap-session-list">${sessionsMarkup}</div>
         </section>
       `;
     })
     .join("");
 
-  renderRoadmapSessionDetail(getActiveSessionDetail());
+  roadmapBoard.innerHTML = currentRoadmapDetailsExpanded
+    ? `
+      ${renderCurrentRoadmapDetailsHeader(roadmap, summary)}
+      <div id="current-roadmap-details" class="current-roadmap-details">
+        ${phasesMarkup}
+      </div>
+    `
+    : renderCurrentRoadmapSummaryCard(roadmap, summary);
+  renderRoadmapSessionDetail(null);
   refreshContinueLearningCard();
 }
 
@@ -1623,8 +2196,10 @@ async function refreshRoadmap() {
       return;
     }
     renderRoadmap(data);
+    await refreshSavedRoadmaps();
   } catch {
     renderRoadmap(null);
+    await refreshSavedRoadmaps();
   }
 }
 
@@ -2387,6 +2962,42 @@ function buildAuthHeaders() {
   return headers;
 }
 
+function isFirebaseUnauthorizedDomainError(error) {
+  return String(error?.code || error?.message || "").includes("auth/unauthorized-domain");
+}
+
+function localFirebaseAuthUrl() {
+  if (window.location.protocol !== "http:") {
+    return "";
+  }
+  if (!["127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
+    return "";
+  }
+  const url = new URL(window.location.href);
+  url.hostname = "localhost";
+  return url.toString();
+}
+
+function redirectToLocalhostForFirebaseAuth() {
+  const targetUrl = localFirebaseAuthUrl();
+  if (!targetUrl) {
+    return false;
+  }
+  if (authHelper) {
+    authHelper.textContent = "Google Sign-In works best from localhost in local development. Redirecting...";
+  }
+  window.location.replace(targetUrl);
+  return true;
+}
+
+function friendlyFirebaseAuthError(error) {
+  if (!isFirebaseUnauthorizedDomainError(error)) {
+    return `Google Sign-In failed: ${error.message}`;
+  }
+  const blockedHost = window.location.hostname || "this domain";
+  return `Google Sign-In is blocked because Firebase has not authorized ${blockedHost}. Open the app from localhost for local development, or add ${blockedHost} in Firebase Authentication > Settings > Authorized domains.`;
+}
+
 async function createServerSession(idToken) {
   const response = await fetch("/api/auth/session", {
     method: "POST",
@@ -2438,6 +3049,7 @@ async function bootstrapAuth() {
       updateAuthPill("Guest sessions enabled", true);
       googleSigninButton.disabled = true;
       googleSigninButton.textContent = "Firebase Auth not configured";
+      usernameInput.hidden = false;
       if (usernameSubmit) {
         usernameSubmit.textContent = "Continue with email or guest";
       }
@@ -2446,13 +3058,22 @@ async function bootstrapAuth() {
       return;
     }
 
-    if (usernameSubmit) {
-      usernameSubmit.textContent = "Continue as guest";
+    if (redirectToLocalhostForFirebaseAuth()) {
+      return;
     }
+
+    usernameInput.hidden = true;
+    usernameInput.value = "";
+    if (usernameSubmit) {
+      usernameSubmit.textContent = "Continue as private guest";
+    }
+    authHelper.textContent =
+      "Use Continue with Google to connect your learner account. Private guest sessions cannot use Google saves.";
 
     const app = initializeApp(config.firebase);
     firebaseAuthClient = getAuth(app);
     googleProvider = new GoogleAuthProvider();
+    googleSavesScopes.forEach((scope) => googleProvider.addScope(scope));
     googleProvider.setCustomParameters({ prompt: "select_account" });
 
     onAuthStateChanged(firebaseAuthClient, async (user) => {
@@ -2487,7 +3108,7 @@ async function bootstrapAuth() {
     updateAuthPill("Google Sign-In ready", true);
   } catch (error) {
     updateAuthPill("Auth setup failed", true);
-    authHelper.textContent = `Firebase Auth could not start: ${error.message}`;
+    authHelper.textContent = friendlyFirebaseAuthError(error).replace("Google Sign-In failed", "Firebase Auth could not start");
   }
 }
 
@@ -2511,6 +3132,8 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
     roadmapHomeStatus.textContent = "Opening roadmap workspace...";
   }
   showPlanWorkspace("roadmap");
+  roadmapWorkspace?.classList.remove("showing-previous-roadmaps");
+  savedRoadmapsPanel?.classList.add("hidden");
   roadmapStatus.textContent = forceRebuild ? "Rebuilding your roadmap..." : "Creating your roadmap...";
   const response = await fetch("/api/roadmap/generate", {
     method: "POST",
@@ -2536,8 +3159,10 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
   if (!response.ok || data.status !== "success") {
     throw new Error(data.error || data.message || "Could not generate roadmap.");
   }
+  currentRoadmapDetailsExpanded = false;
   renderRoadmap(data);
-  roadmapStatus.textContent = data.message || "Roadmap ready.";
+  await refreshSavedRoadmaps();
+  roadmapStatus.textContent = "Current roadmap ready.";
   if (roadmapHomeStatus) {
     roadmapHomeStatus.textContent = "Roadmap ready. Use View roadmap anytime.";
   }
@@ -2575,6 +3200,7 @@ async function deleteCurrentRoadmap() {
 
   selectedRoadmapSessionKey = "";
   renderRoadmap(null);
+  await refreshSavedRoadmaps();
   showPlanWorkspace("home");
   roadmapStatus.textContent = data.message || "Roadmap deleted.";
   if (roadmapHomeStatus) {
@@ -2690,6 +3316,63 @@ async function saveRoadmapSessionToCalendar(button) {
     roadmapStatus.textContent = data.message || "Study session saved to Google Calendar.";
   } catch (error) {
     roadmapStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function saveSavedRoadmapSessionReminder(button) {
+  const username = ensureIdentity();
+  if (!username) {
+    return;
+  }
+  const dueDate = String(button.dataset.sessionDue || "").trim();
+  if (!dueDate) {
+    roadmapStatus.textContent = "This session needs a due date before ArkAI can set a reminder.";
+    return;
+  }
+  const reminderStart = new Date(`${dueDate}T09:00:00`);
+  if (Number.isNaN(reminderStart.getTime())) {
+    roadmapStatus.textContent = "Could not read that session due date.";
+    return;
+  }
+  const durationMinutes = Number(button.dataset.sessionDuration || 45) || 45;
+  const reminderEnd = new Date(reminderStart.getTime() + durationMinutes * 60 * 1000);
+
+  button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Saving...";
+  roadmapStatus.textContent = "Saving study reminder to Google Calendar...";
+  try {
+    const response = await fetch("/api/roadmap/session/save-calendar", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        userId: username,
+        idToken: getIdToken(),
+        title: button.dataset.sessionTitle || "Roadmap study session",
+        focus: button.dataset.sessionFocus || "",
+        phaseTitle: button.dataset.phaseTitle || "",
+        phaseGoal: button.dataset.phaseGoal || "",
+        startTime: reminderStart.toISOString(),
+        endTime: reminderEnd.toISOString(),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !["success", "auth_required"].includes(data.status)) {
+      throw new Error(data.error || data.message || "Could not save reminder.");
+    }
+    if (data.status === "auth_required") {
+      handleGoogleSaveAuthRequired(data.message, roadmapStatus);
+      return;
+    }
+    roadmapStatus.textContent = data.message || "Study reminder saved to Google Calendar.";
+  } catch (error) {
+    roadmapStatus.textContent = error.message || "Could not save reminder.";
   } finally {
     button.disabled = false;
     button.textContent = oldText;
@@ -2966,12 +3649,20 @@ googleSigninButton.addEventListener("click", async () => {
       await createServerSession(idToken);
       closeUsernameModal();
       updateAuthPill(result.user.email || activeSession.displayName || "Signed in", false);
-      await refreshGoogleSavesStatus();
-      await connectGoogleSaves({ askFirst: true });
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        await connectGoogleSavesWithAccessToken(credential.accessToken);
+      } else {
+        await refreshGoogleSavesStatus();
+        await connectGoogleSaves({ askFirst: true });
+      }
     }
     promptInput.focus();
   } catch (error) {
-    authHelper.textContent = `Google Sign-In failed: ${error.message}`;
+    if (isFirebaseUnauthorizedDomainError(error) && redirectToLocalhostForFirebaseAuth()) {
+      return;
+    }
+    authHelper.textContent = friendlyFirebaseAuthError(error);
   }
 });
 
@@ -3033,8 +3724,89 @@ if (viewRoadmapButton) {
   viewRoadmapButton.addEventListener("click", () => {
     setActiveView("plan");
     showPlanWorkspace("roadmap");
+    savedRoadmapsPanel?.classList.add("hidden");
+    roadmapWorkspace?.classList.remove("showing-previous-roadmaps");
+    roadmapWorkspace?.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
+
+if (previousRoadmapsButton) {
+  previousRoadmapsButton.addEventListener("click", async () => {
+    setActiveView("plan");
+    showPlanWorkspace("roadmap");
+    await refreshSavedRoadmaps({ showPanel: true });
+  });
+}
+
+closeSavedRoadmapsButton?.addEventListener("click", () => {
+  selectedSavedRoadmapId = "";
+  savedRoadmapsPanel?.classList.add("hidden");
+  roadmapWorkspace?.classList.remove("showing-previous-roadmaps");
+  roadmapWorkspace?.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+deleteAllSavedRoadmapsButton?.addEventListener("click", async () => {
+  try {
+    await deleteAllSavedRoadmaps();
+  } catch (error) {
+    if (roadmapStatus) {
+      roadmapStatus.textContent = error.message || "Could not delete saved roadmaps.";
+    }
+  }
+});
+
+savedRoadmapsList?.addEventListener("click", async (event) => {
+  const backButton = event.target.closest("[data-back-to-saved-roadmaps]");
+  if (backButton) {
+    selectedSavedRoadmapId = "";
+    renderSavedRoadmaps();
+    return;
+  }
+
+  const viewButton = event.target.closest("[data-view-saved-roadmap]");
+  if (viewButton) {
+    selectedSavedRoadmapId = viewButton.dataset.viewSavedRoadmap || "";
+    renderSavedRoadmaps();
+    savedRoadmapsPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  const openSavedSessionButton = event.target.closest("[data-open-saved-session]");
+  if (openSavedSessionButton) {
+    openRoadmapSession({
+      title: openSavedSessionButton.dataset.sessionTitle,
+      focus: openSavedSessionButton.dataset.sessionFocus,
+      duration_minutes: openSavedSessionButton.dataset.sessionDuration,
+      phaseTitle: openSavedSessionButton.dataset.phaseTitle,
+      phaseGoal: openSavedSessionButton.dataset.phaseGoal,
+    });
+    return;
+  }
+
+  const statusButton = event.target.closest("[data-saved-session-status]");
+  if (statusButton) {
+    await updateSavedRoadmapSessionStatus(statusButton);
+    return;
+  }
+
+  const reminderButton = event.target.closest("[data-remind-saved-session]");
+  if (reminderButton) {
+    await saveSavedRoadmapSessionReminder(reminderButton);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-saved-roadmap]");
+  if (!deleteButton) {
+    return;
+  }
+  try {
+    await deleteSavedRoadmap(deleteButton.dataset.deleteSavedRoadmap);
+  } catch (error) {
+    if (roadmapStatus) {
+      roadmapStatus.textContent = error.message || "Could not remove saved roadmap.";
+    }
+  }
+});
 
 if (sideProgressAction) {
   sideProgressAction.addEventListener("click", () => {
@@ -3488,6 +4260,16 @@ diagnosticForm.addEventListener("submit", async (event) => {
 });
 
 roadmapBoard.addEventListener("click", async (event) => {
+  const toggleCurrentRoadmapButton = event.target.closest("[data-toggle-current-roadmap]");
+  if (toggleCurrentRoadmapButton) {
+    currentRoadmapDetailsExpanded = !currentRoadmapDetailsExpanded;
+    renderRoadmap({ roadmap: activeRoadmap, summary: activeRoadmapSummary });
+    if (currentRoadmapDetailsExpanded) {
+      document.getElementById("current-roadmap-details")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    return;
+  }
+
   const openButton = event.target.closest("[data-open-session]");
   if (openButton) {
     openRoadmapSession({
@@ -3583,7 +4365,7 @@ saveRoadmapTasksButton?.addEventListener("click", () => {
 });
 
 connectGoogleSavesButton?.addEventListener("click", () => {
-  connectGoogleSaves({ askFirst: true });
+  connectGoogleSaves({ askFirst: true, forceReconnect: googleSavesConnected });
 });
 
 materialsLibrary.addEventListener("change", (event) => {
@@ -3622,7 +4404,6 @@ deleteAllMaterialsButton.addEventListener("click", async () => {
 focusTabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     setActiveView(tab.dataset.viewTarget);
-    setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
     if (tab.dataset.viewTarget === "plan") {
       showPlanWorkspace("home");
     }
@@ -3699,6 +4480,9 @@ chatForm.addEventListener("submit", async (event) => {
   }
   if (!userPrompt) {
     userPrompt = "Please help me understand the attached file.";
+  }
+  if (isGoogleSavePrompt(userPrompt) && !requestGoogleSaveSetupFromChat()) {
+    return;
   }
 
   let temporaryAttachments = [];
