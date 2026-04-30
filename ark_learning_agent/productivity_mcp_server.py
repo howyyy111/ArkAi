@@ -14,6 +14,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaInMemoryUpload
 
 import firebase_admin
@@ -886,7 +887,24 @@ def create_calendar_event(user_id: str, event_title: str, start_time_iso: str, e
         'dateTime': end_time_iso,
       },
     }
-    event_result = service.events().insert(calendarId='primary', body=event).execute()
+    try:
+        event_result = service.events().insert(calendarId='primary', body=event).execute()
+    except HttpError as exc:
+        detail = str(exc)
+        try:
+            payload = json.loads(exc.content.decode("utf-8"))
+            detail = payload.get("error", {}).get("message") or detail
+        except Exception:
+            pass
+        return {
+            "status": "error",
+            "message": f"Google Calendar could not create the event: {detail}",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"Google Calendar could not create the event: {exc}",
+        }
     return {
         "status": "success",
         "message": f"Event created: {event_result.get('htmlLink')}"

@@ -357,7 +357,21 @@ def _is_google_task_save_request(message: str) -> bool:
 def _is_google_calendar_save_request(message: str) -> bool:
     text = str(message or "").strip().lower()
     return (
-        ("save" in text or "add" in text or "create" in text or "schedule" in text or "put" in text or "sync" in text)
+        any(
+            verb in text
+            for verb in (
+                "save",
+                "add",
+                "create",
+                "schedule",
+                "put",
+                "sync",
+                "set",
+                "book",
+                "plan",
+                "remind",
+            )
+        )
         and any(phrase in text for phrase in ("google calendar", "google calender", "calendar", "calender", "gcal", "event"))
     )
 
