@@ -19,20 +19,6 @@
                 <p class="eyebrow">Adaptive learning assistant</p>
                 <h1>ARKAI</h1>
             </div>
-            <nav class="topbar-nav">
-                <button class="focus-tab topbar-tab is-active" type="button" data-view-target="tutor">
-                    <strong>Tutor</strong>
-                </button>
-                <button class="focus-tab topbar-tab" type="button" data-view-target="plan">
-                    <strong>Plan</strong>
-                </button>
-                <button class="focus-tab topbar-tab" type="button" data-view-target="materials">
-                    <strong>Materials</strong>
-                </button>
-                <button class="focus-tab topbar-tab" type="button" data-view-target="insights">
-                    <strong>Insights</strong>
-                </button>
-            </nav>
             <div class="topbar-status">
                 <div class="profile-container">
                     <button id="auth-pill" class="profile-trigger status-pill subtle" title="Account Settings">
@@ -43,6 +29,11 @@
                             <circle cx="12" cy="7" r="4" fill="currentColor" fill-opacity="0.1"></circle>
                         </svg>
                         <span id="auth-pill-label">Guest session</span>
+                        <svg class="auth-pill-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            aria-hidden="true">
+                            <path d="m6 9 6 6 6-6"></path>
+                        </svg>
                     </button>
                     <div id="profile-dropdown" class="profile-dropdown hidden">
                         <div class="profile-info">
@@ -63,7 +54,8 @@
                                 <span>Google saves</span>
                                 <strong id="google-saves-status">Not connected</strong>
                             </div>
-                            <button id="connect-google-saves-button" class="dropdown-action" type="button">Connect</button>
+                            <button id="connect-google-saves-button" class="dropdown-action"
+                                type="button">Connect</button>
                         </div>
                         <button id="header-change-account" class="dropdown-action">Switch account</button>
                     </div>
@@ -72,6 +64,85 @@
         </header>
 
         <main class="main-layout">
+            <aside class="side-nav-panel" aria-label="Primary navigation">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-row">
+                        <span class="sidebar-brand-name">ARKAI</span>
+                    </div>
+                    <p>Adaptive learning assistant</p>
+                </div>
+                <nav class="sidebar-nav topbar-nav">
+                    <button class="focus-tab topbar-tab is-active" type="button" data-view-target="tutor">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="m3 11 9-8 9 8"></path>
+                                <path d="M5 10v10h14V10"></path>
+                                <path d="M9 20v-6h6v6"></path>
+                            </svg>
+                        </span>
+                        <strong>Tutor</strong>
+                    </button>
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="plan">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M8 2v4"></path>
+                                <path d="M16 2v4"></path>
+                                <rect width="18" height="18" x="3" y="4" rx="2"></rect>
+                                <path d="M3 10h18"></path>
+                                <path d="m9 16 2 2 4-4"></path>
+                            </svg>
+                        </span>
+                        <strong>Plan</strong>
+                    </button>
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="materials">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z">
+                                </path>
+                            </svg>
+                        </span>
+                        <strong>Materials</strong>
+                    </button>
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="insights">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 3v18h18"></path>
+                                <path d="M7 16v-5"></path>
+                                <path d="M12 16V7"></path>
+                                <path d="M17 16v-8"></path>
+                            </svg>
+                        </span>
+                        <strong>Insights</strong>
+                    </button>
+                </nav>
+                <div class="sidebar-bottom">
+                    <section class="side-progress-card" aria-label="Continue learning">
+                        <div class="side-progress-kicker">Continue learning</div>
+                        <h3 id="side-progress-title">No roadmap yet</h3>
+                        <p id="side-progress-detail" class="side-progress-detail">Create a roadmap to track progress.
+                        </p>
+                        <div class="side-progress-meter">
+                            <div class="side-progress-track" aria-hidden="true">
+                                <span id="side-progress-fill" class="side-progress-fill"></span>
+                            </div>
+                            <span id="side-progress-percent">0%</span>
+                        </div>
+                        <button id="side-progress-action" class="side-progress-link" type="button">
+                            <span class="side-progress-action-label">Create roadmap</span>
+                            <svg class="side-progress-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M5 12h14"></path>
+                                <path d="m12 5 7 7-7 7"></path>
+                            </svg>
+                        </button>
+                    </section>
+                </div>
+            </aside>
             <section class="focus-frame panel">
 
 
@@ -85,12 +156,25 @@
                                         <h3>Ask one thing. Learn one step.</h3>
                                     </div>
                                     <div class="chat-panel-header-meta">
-                                        <p class="state-summary">Ask a question, continue a session, or start with a prompt.</p>
-                                        <button id="new-session-button" class="ghost-button mini-button" type="button">New session</button>
-                                        <button id="show-history-button" class="ghost-button mini-button" type="button">History</button>
+                                        <p class="state-summary">Ask a question, continue a session, or start
+                                            with a
+                                            prompt.</p>
+                                        <button id="new-session-button" class="ghost-button mini-button" type="button">
+                                            <svg class="button-leading-icon" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M12 5v14"></path>
+                                                <path d="M5 12h14"></path>
+                                            </svg>
+                                            <span>New session</span>
+                                        </button>
+                                        <button id="show-history-button" class="ghost-button mini-button"
+                                            type="button">History</button>
                                     </div>
                                 </div>
-                                <p id="voice-status" class="state-summary chat-toolbar-status hidden">Voice mode idle.</p>
+                                <p id="voice-status" class="state-summary chat-toolbar-status hidden">Voice mode
+                                    idle.
+                                </p>
 
                                 <div class="chat-stage">
                                     <div id="messages" class="messages" aria-live="polite">
@@ -100,17 +184,37 @@
                                                 <p>Choose a prompt below or write your own question.</p>
                                             </div>
                                             <div class="starter-prompts">
-                                                <button class="starter-chip" type="button" data-starter-prompt="Teach me Python loops simply with one example.">Teach me Python loops simply</button>
-                                                <button class="starter-chip" type="button" data-starter-prompt="Quiz me on this topic with 3 short questions.">Quiz me on this topic</button>
-                                                <button class="starter-chip" type="button" data-starter-prompt="Continue my roadmap session and keep it focused.">Continue my roadmap session</button>
-                                                <button class="starter-chip" type="button" data-starter-prompt="Turn this into one short lesson and one small exercise.">Give me one lesson and one exercise</button>
+                                                <button class="starter-chip" type="button"
+                                                    data-starter-prompt="Teach me Python loops simply with one example.">Teach
+                                                    me Python loops simply</button>
+                                                <button class="starter-chip" type="button"
+                                                    data-starter-prompt="Quiz me on this topic with 3 short questions.">Quiz
+                                                    me on this topic</button>
+                                                <button class="starter-chip" type="button"
+                                                    data-starter-prompt="Continue my roadmap session and keep it focused.">Continue
+                                                    my roadmap session</button>
+                                                <button class="starter-chip" type="button"
+                                                    data-starter-prompt="Turn this into one short lesson and one small exercise.">Give
+                                                    me one lesson and one exercise</button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
                                 <form id="chat-form" class="composer">
+                                    <div id="tutor-attachments" class="tutor-attachments hidden"></div>
                                     <div class="composer-inner">
+                                        <input id="tutor-attachment-input" type="file" multiple
+                                            accept=".txt,.md,.csv,.json,.html,.css,.js,.py,text/*" hidden />
+                                        <button id="attach-tutor-file-button" class="composer-icon-button" type="button"
+                                            aria-label="Attach file">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path
+                                                    d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48">
+                                                </path>
+                                            </svg>
+                                        </button>
                                         <textarea id="prompt" name="prompt" rows="1"
                                             placeholder="Ask a clear question, paste a topic, or continue a roadmap session."></textarea>
                                         <button id="submit-button" class="primary-button" type="submit">
@@ -141,7 +245,9 @@
                                     <div class="progress-card-header">
                                         <div>
                                             <p class="section-label">Your progress</p>
-                                            <p id="sidebar-progress-summary" class="state-summary">No saved progress yet.</p>
+                                            <p id="sidebar-progress-summary" class="state-summary">No saved
+                                                progress
+                                                yet.</p>
                                         </div>
                                         <div id="mastery-score" class="mastery-score">0%</div>
                                     </div>
@@ -178,8 +284,11 @@
                                         Your next session appears here.
                                     </div>
                                     <div class="inline-actions plan-card-actions">
-                                        <button id="view-roadmap-button" class="ghost-button mini-button" type="button" disabled>View roadmap</button>
-                                        <button id="delete-roadmap-button" class="ghost-button mini-button subtle-action" type="button" disabled>Delete</button>
+                                        <button id="view-roadmap-button" class="ghost-button mini-button" type="button"
+                                            disabled>View roadmap</button>
+                                        <button id="delete-roadmap-button"
+                                            class="ghost-button mini-button subtle-action" type="button"
+                                            disabled>Delete</button>
                                     </div>
                                 </section>
                             </div>
@@ -191,9 +300,11 @@
                                         <div>
                                             <p class="section-label">Check-in</p>
                                             <h3>Quick check</h3>
-                                            <p class="state-summary">Set your topic and answer a few questions.</p>
+                                            <p class="state-summary">Set your topic and answer a few questions.
+                                            </p>
                                         </div>
-                                        <button id="start-diagnostic-button" class="primary-button plan-action-button" type="button">Check</button>
+                                        <button id="start-diagnostic-button" class="primary-button plan-action-button"
+                                            type="button">Check</button>
                                     </div>
                                     <div class="assessment-grid">
                                         <label>
@@ -206,9 +317,15 @@
                                                 placeholder="Prepare for interviews" />
                                         </label>
                                         <label>
-                                            <span>Time per day</span>
-                                            <input id="diagnostic-time" type="number" min="15" step="15"
-                                                placeholder="45" />
+                                            <span>Test duration</span>
+                                            <div class="time-unit-field">
+                                                <input id="diagnostic-time" type="number" min="1" max="60" step="1"
+                                                    placeholder="45" />
+                                                <select id="diagnostic-time-unit" aria-label="Diagnostic time unit">
+                                                    <option value="minutes">min</option>
+                                                    <option value="hours">hr</option>
+                                                </select>
+                                            </div>
                                         </label>
                                         <label>
                                             <span>Level</span>
@@ -232,8 +349,8 @@
                                         <div class="inline-actions plan-action-stack">
                                             <button id="generate-roadmap-button" class="primary-button"
                                                 type="button">Create</button>
-                                            <button id="rebuild-roadmap-button" class="ghost-button"
-                                                type="button" disabled>Replace</button>
+                                            <button id="rebuild-roadmap-button" class="ghost-button" type="button"
+                                                disabled>Replace</button>
                                         </div>
                                     </div>
                                     <div class="assessment-grid">
@@ -247,8 +364,14 @@
                                         </label>
                                         <label>
                                             <span>Time per day</span>
-                                            <input id="roadmap-time" type="number" min="15" step="15"
-                                                placeholder="45" />
+                                            <div class="time-unit-field">
+                                                <input id="roadmap-time" type="number" min="1" max="60" step="1"
+                                                    placeholder="45" />
+                                                <select id="roadmap-time-unit" aria-label="Roadmap time unit">
+                                                    <option value="minutes">min</option>
+                                                    <option value="hours">hr</option>
+                                                </select>
+                                            </div>
                                         </label>
                                         <label>
                                             <span>Days to goal</span>
@@ -261,33 +384,44 @@
                             </div>
 
                         </div>
-                        <section id="diagnostic-workspace" class="plan-workspace content-card panel-lite hidden" aria-live="polite">
+                        <section id="diagnostic-workspace" class="plan-workspace content-card panel-lite hidden"
+                            aria-live="polite">
                             <div class="workspace-header">
-                                <button class="ghost-button mini-button" type="button" data-plan-back>Back to plan</button>
                                 <div>
                                     <p class="section-label">Diagnostic</p>
                                     <h3>Answer the quick check</h3>
-                                    <p class="state-summary">Keep it simple. Submit when every question has an answer.</p>
+                                    <p class="state-summary">Keep it simple. Submit when every question has an
+                                        answer.
+                                    </p>
                                 </div>
                             </div>
-                            <div id="assessment-status" class="assessment-status">Start with a short check.</div>
+                            <div id="assessment-status" class="assessment-status">Start with a short check.
+                            </div>
                             <form id="diagnostic-form" class="diagnostic-form hidden">
                                 <div id="diagnostic-questions" class="diagnostic-questions"></div>
                                 <div class="inline-actions">
-                                    <button id="submit-diagnostic-button" class="primary-button"
-                                        type="submit">Submit answers</button>
+                                    <button id="submit-diagnostic-button" class="primary-button" type="submit">Submit
+                                        answers</button>
                                     <button id="save-assessment-google-doc-button" class="ghost-button hidden"
                                         type="button">Save to Google Docs</button>
                                 </div>
                             </form>
                             <div id="diagnostic-result" class="diagnostic-result hidden"></div>
                         </section>
-                        <section id="roadmap-workspace" class="plan-workspace content-card panel-lite hidden" aria-live="polite">
+                        <section id="roadmap-workspace" class="plan-workspace content-card panel-lite hidden"
+                            aria-live="polite">
                             <div class="workspace-header">
-                                <button class="ghost-button mini-button" type="button" data-plan-back>Back to plan</button>
+                                <button class="ghost-button mini-button plan-back-button" type="button" data-plan-back
+                                    aria-label="Back to plan">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m15 18-6-6 6-6"></path>
+                                    </svg>
+                                </button>
                                 <div class="roadmap-heading">
                                     <h3>Your study path</h3>
-                                    <div id="roadmap-status" class="assessment-status">Create your roadmap.</div>
+                                    <div id="roadmap-status" class="assessment-status">Create your roadmap.
+                                    </div>
                                 </div>
                                 <div class="inline-actions roadmap-sync-actions">
                                     <button id="save-roadmap-tasks-button" class="ghost-button mini-button"
@@ -310,7 +444,9 @@
                                         <p class="section-label">Grounded study</p>
                                         <h3>Materials library</h3>
                                     </div>
-                                    <p class="state-summary">Upload notes, choose sources, then send answers to Tutor or tests to Plan.</p>
+                                    <p class="state-summary">Upload notes, choose sources, then send answers to
+                                        Tutor or
+                                        tests to Plan.</p>
                                 </section>
 
                                 <section class="content-card panel-lite helper-card upload-card">
@@ -322,7 +458,8 @@
                                         <span class="status-pill subtle">5 MB max</span>
                                     </div>
 
-                                    <label id="drop-zone" class="drop-zone" for="material-file" role="button" tabindex="0">
+                                    <label id="drop-zone" class="drop-zone" for="material-file" role="button"
+                                        tabindex="0">
                                         <div class="drop-zone-icon">
                                             <svg width="34" height="34" viewBox="0 0 24 24" fill="none"
                                                 stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
@@ -348,7 +485,8 @@
                                             placeholder="Paste lecture notes, syllabus, or snippets here."></textarea>
                                     </label>
 
-                                    <button id="upload-material-button" class="primary-button wide-button" type="button">Upload material</button>
+                                    <button id="upload-material-button" class="primary-button wide-button"
+                                        type="button">Upload material</button>
                                 </section>
 
                                 <section class="content-card panel-lite helper-card materials-action-card">
@@ -357,7 +495,9 @@
                                             <p class="section-label">Use sources</p>
                                             <h4>Ask or practice</h4>
                                         </div>
-                                        <div id="materials-selection-summary" class="state-summary field-note">No materials selected.</div>
+                                        <div id="materials-selection-summary" class="state-summary field-note">
+                                            No
+                                            materials selected.</div>
                                     </div>
 
                                     <label>
@@ -367,7 +507,8 @@
                                     </label>
 
                                     <div class="materials-action-grid">
-                                        <button id="ask-materials-button" class="primary-button wide-button" type="button">Ask in Tutor</button>
+                                        <button id="ask-materials-button" class="primary-button wide-button"
+                                            type="button">Ask in Tutor</button>
                                     </div>
 
                                     <details class="materials-settings">
@@ -391,32 +532,42 @@
                                             </div>
                                             <label class="file-upload-field">
                                                 <span class="eyebrow">Upload sample exam</span>
-                                                <input id="materials-mock-style-file" class="file-input-control" type="file"
+                                                <input id="materials-mock-style-file" class="file-input-control"
+                                                    type="file"
                                                     accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.pdf,.png,.jpg,.jpeg,.webp" />
                                             </label>
                                         </div>
                                     </details>
 
                                     <div class="materials-action-grid">
-                                        <button id="create-materials-mock-test-button" class="ghost-button wide-button" type="button">Create mock test</button>
+                                        <button id="create-materials-mock-test-button" class="ghost-button wide-button"
+                                            type="button">Create mock
+                                            test</button>
                                     </div>
-                                    <div id="materials-status" class="assessment-status">Upload notes, then ask.</div>
+                                    <div id="materials-status" class="assessment-status">Upload notes, then ask.
+                                    </div>
                                 </section>
                             </aside>
 
-                            <section id="materials" class="chat-panel panel-lite materials-library-panel" aria-live="polite">
+                            <section id="materials" class="chat-panel panel-lite materials-library-panel"
+                                aria-live="polite">
                                 <div class="chat-panel-header">
                                     <div>
                                         <p class="section-label">Library</p>
                                         <h3>Your uploaded materials</h3>
                                     </div>
                                     <div class="inline-actions">
-                                        <p id="materials-library-summary" class="state-summary">Files and notes ready for grounded Q&amp;A. Max 5 MB each, 25 MB total.</p>
-                                        <button id="delete-all-materials-button" class="ghost-button" type="button" disabled>Delete all</button>
+                                        <p id="materials-library-summary" class="state-summary">Files and notes
+                                            ready
+                                            for grounded Q&amp;A. Max 5 MB each, 25 MB total.</p>
+                                        <button id="delete-all-materials-button" class="ghost-button" type="button"
+                                            disabled>Delete all</button>
                                     </div>
                                 </div>
                                 <div id="materials-library" class="materials-library">
-                                    <p class="mastery-empty">Upload a file or paste notes to build your materials library.</p>
+                                    <p class="mastery-empty">Upload a file or paste notes to build your
+                                        materials
+                                        library.</p>
                                 </div>
                             </section>
                         </div>
@@ -441,14 +592,15 @@
                                         <div>
                                             <p class="section-label">Report</p>
                                             <h4>Weekly learning summary</h4>
-                                            <p class="state-summary">Review progress or save it to Google Docs.</p>
+                                            <p class="state-summary">Review progress or save it to Google Docs.
+                                            </p>
                                         </div>
                                     </div>
                                     <div class="tab-actions">
                                         <button id="refresh-insights-button" class="ghost-button" type="button">Refresh
                                             insights</button>
-                                        <button id="generate-report-button" class="primary-button"
-                                            type="button">Open report</button>
+                                        <button id="generate-report-button" class="primary-button" type="button">Open
+                                            report</button>
                                     </div>
                                 </section>
                             </div>
@@ -460,7 +612,9 @@
                                         <div>
                                             <p class="section-label">Insights</p>
                                             <h3>Understand your progress</h3>
-                                            <p class="state-summary insights-compact-copy">See progress, gaps, and next steps.</p>
+                                            <p class="state-summary insights-compact-copy">See progress, gaps,
+                                                and next
+                                                steps.</p>
                                         </div>
                                     </div>
                                     <div id="evaluation-board" class="materials-library">
@@ -470,26 +624,49 @@
                                                     <div>
                                                         <p class="section-label">Snapshot</p>
                                                         <h4>No learning signal yet</h4>
-                                                        <p>ArkAI needs one learning action before it can summarize your progress.</p>
+                                                        <p>ArkAI needs one learning action before it can
+                                                            summarize your
+                                                            progress.</p>
                                                     </div>
                                                     <strong class="insight-score">0%</strong>
                                                 </div>
-                                                <div class="insight-meter" aria-hidden="true"><span style="width: 0%"></span></div>
+                                                <div class="insight-meter" aria-hidden="true"><span
+                                                        style="width: 0%"></span></div>
                                                 <div class="insight-status-grid">
-                                                    <div class="insight-status-item"><strong>None</strong><span>Diagnostics</span><p>Take a quick check</p></div>
-                                                    <div class="insight-status-item"><strong>Missing</strong><span>Roadmap</span><p>Create next steps</p></div>
-                                                    <div class="insight-status-item"><strong>Missing</strong><span>Materials</span><p>Upload notes when useful</p></div>
-                                                    <div class="insight-status-item"><strong>None</strong><span>Activity</span><p>Finish one tutor session</p></div>
+                                                    <div class="insight-status-item">
+                                                        <strong>None</strong><span>Diagnostics</span>
+                                                        <p>Take a quick check</p>
+                                                    </div>
+                                                    <div class="insight-status-item">
+                                                        <strong>Missing</strong><span>Roadmap</span>
+                                                        <p>Create next steps</p>
+                                                    </div>
+                                                    <div class="insight-status-item">
+                                                        <strong>Missing</strong><span>Materials</span>
+                                                        <p>Upload notes when useful</p>
+                                                    </div>
+                                                    <div class="insight-status-item">
+                                                        <strong>None</strong><span>Activity</span>
+                                                        <p>Finish one tutor session</p>
+                                                    </div>
                                                 </div>
                                             </article>
                                             <article class="insight-card">
                                                 <p class="section-label">Next focus</p>
                                                 <h4>Start here</h4>
-                                                <p class="state-summary insights-compact-copy">Do one small action so Insights becomes useful.</p>
+                                                <p class="state-summary insights-compact-copy">Do one small
+                                                    action so
+                                                    Insights becomes useful.</p>
                                                 <div class="next-focus-list">
-                                                    <div class="next-focus-item"><span>1</span><p>Ask the tutor one focused question.</p></div>
-                                                    <div class="next-focus-item"><span>2</span><p>Take a quick diagnostic when ready.</p></div>
-                                                    <div class="next-focus-item"><span>3</span><p>Create a roadmap after the check.</p></div>
+                                                    <div class="next-focus-item"><span>1</span>
+                                                        <p>Ask the tutor one focused question.</p>
+                                                    </div>
+                                                    <div class="next-focus-item"><span>2</span>
+                                                        <p>Take a quick diagnostic when ready.</p>
+                                                    </div>
+                                                    <div class="next-focus-item"><span>3</span>
+                                                        <p>Create a roadmap after the check.</p>
+                                                    </div>
                                                 </div>
                                             </article>
                                         </div>
@@ -498,17 +675,24 @@
                             </div>
 
                         </div>
-                        <section id="report-workspace" class="insights-workspace content-card panel-lite hidden" aria-live="polite">
+                        <section id="report-workspace" class="insights-workspace content-card panel-lite hidden"
+                            aria-live="polite">
                             <div class="workspace-header">
-                                <button class="ghost-button mini-button" type="button" data-insights-back>Back to insights</button>
+                                <button class="ghost-button mini-button" type="button" data-insights-back>Back
+                                    to
+                                    insights</button>
                                 <div>
                                     <p class="section-label">Report</p>
                                     <h3>Weekly learning report</h3>
-                                    <p class="state-summary">Generate a shareable summary of progress, gaps, and next steps.</p>
+                                    <p class="state-summary">Generate a shareable summary of progress, gaps, and
+                                        next
+                                        steps.</p>
                                 </div>
                             </div>
                             <div id="report-board" class="materials-library report-board">
-                                <p class="mastery-empty">No weekly report yet. Generate one when you want a shareable summary.</p>
+                                <p class="mastery-empty">No weekly report yet. Generate one when you want a
+                                    shareable
+                                    summary.</p>
                             </div>
                         </section>
                     </section>
@@ -520,8 +704,10 @@
 
     <div id="username-modal" class="modal-backdrop" aria-hidden="true">
         <div class="modal-card" style="position: relative;">
-            <button id="close-modal-button" class="icon-button" style="position: absolute; top: 1rem; right: 1rem;" aria-label="Close" type="button">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button id="close-modal-button" class="icon-button" style="position: absolute; top: 1rem; right: 1rem;"
+                aria-label="Close" type="button">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
                     <line x1="6" y1="6" x2="18" y2="18"></line>
                 </svg>
@@ -535,7 +721,8 @@
             <div class="modal-form">
                 <button id="google-signin-button" class="primary-button" type="button">Continue with Google</button>
                 <p id="auth-helper" class="auth-helper">
-                    If Firebase web auth is not configured yet, you can still continue with an isolated guest session below.
+                    If Firebase web auth is not configured yet, you can still continue with an isolated guest session
+                    below.
                 </p>
             </div>
             <form id="username-form" class="modal-form fallback-form">

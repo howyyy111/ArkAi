@@ -1505,8 +1505,14 @@ def _today_iso_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _date_plus_days(days: int) -> str:
-    return (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+def _date_plus_days(days: int, start_date: str = "") -> str:
+    base_date = datetime.now(timezone.utc).date()
+    if start_date:
+        try:
+            base_date = datetime.fromisoformat(str(start_date).strip()).date()
+        except ValueError:
+            base_date = datetime.now(timezone.utc).date()
+    return (base_date + timedelta(days=days)).isoformat()
 
 
 def _phase_title(index: int) -> str:
@@ -1521,6 +1527,7 @@ def _build_roadmap_phases(
     deadline_days: int,
     weak_topics: list[str],
     recovery_mode: bool,
+    start_date: str = "",
 ) -> list[dict[str, Any]]:
     topic_label = topic or "your target topic"
     focus_topics = weak_topics[:] if weak_topics else [topic_label]
@@ -1545,7 +1552,10 @@ def _build_roadmap_phases(
                     "focus": primary_focus,
                     "duration_minutes": minutes,
                     "status": "planned",
-                    "due_date": _date_plus_days(min(deadline_days, index * spacing + session_index + 1)),
+                    "due_date": _date_plus_days(
+                        min(deadline_days, index * spacing + session_index + 1),
+                        start_date=start_date,
+                    ),
                 }
             )
 
@@ -1563,7 +1573,7 @@ def _build_roadmap_phases(
                     f"Learner can explain and apply {primary_focus} in a short exercise."
                 ),
                 "checkpoint_type": checkpoint_type,
-                "checkpoint_due_date": _date_plus_days(due_offset),
+                "checkpoint_due_date": _date_plus_days(due_offset, start_date=start_date),
                 "sessions": sessions,
             }
         )
@@ -1618,6 +1628,7 @@ def build_or_update_roadmap(
     level: str = "",
     available_time: int | None = None,
     deadline_days: int = 14,
+    start_date: str = "",
     force_rebuild: bool = False,
     revision_reason: str = "",
     recovery_mode_override: bool | None = None,
@@ -1634,6 +1645,12 @@ def build_or_update_roadmap(
     normalized_time = available_time if available_time not in ("", None) else profile.get("available_time")
     normalized_time = _safe_int(normalized_time, 45) or 45
     deadline_days = max(7, min(60, _safe_int(deadline_days, 14) or 14))
+    normalized_start_date = str(start_date).strip()
+    if normalized_start_date:
+        try:
+            datetime.fromisoformat(normalized_start_date).date()
+        except ValueError:
+            normalized_start_date = ""
 
     recovery_mode = bool(recovery_mode_override) if recovery_mode_override is not None else False
     auto_reason = revision_reason
@@ -1660,7 +1677,7 @@ def build_or_update_roadmap(
         learning_style=profile.get("learning_style", "balanced"),
         available_time=normalized_time,
         goal=normalized_goal,
-        target_date=profile.get("target_date", ""),
+        target_date=normalized_start_date or profile.get("target_date", ""),
     )
 
     phases = _build_roadmap_phases(
@@ -1671,6 +1688,7 @@ def build_or_update_roadmap(
         deadline_days=deadline_days,
         weak_topics=weak_topics,
         recovery_mode=recovery_mode,
+        start_date=normalized_start_date,
     )
     roadmap = {
         "roadmap_id": str(uuid.uuid4()),
@@ -1679,6 +1697,7 @@ def build_or_update_roadmap(
         "level": normalized_level,
         "available_time": normalized_time,
         "deadline_days": deadline_days,
+        "start_date": normalized_start_date,
         "mode": "recovery" if recovery_mode else "standard",
         "status": "active",
         "revision_reason": auto_reason,

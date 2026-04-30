@@ -25,6 +25,8 @@ from ark_learning_agent.materials import (
     create_mock_test_from_materials,
     delete_all_learning_materials,
     delete_learning_material,
+    _decode_base64,
+    _extract_text_from_payload,
     list_learning_materials,
     save_learning_material,
     tutor_from_materials,
@@ -801,6 +803,63 @@ def _build_agent_message(
     )
 
 
+def _build_temporary_attachment_context(attachments: Any) -> tuple[str, list[dict[str, Any]]]:
+    if not isinstance(attachments, list):
+        return "", []
+
+    context_parts: list[str] = []
+    metadata: list[dict[str, Any]] = []
+    total_text_chars = 0
+    max_text_chars = 16000
+
+    for raw_item in attachments[:3]:
+        if not isinstance(raw_item, dict):
+            continue
+        name = str(raw_item.get("name", "attachment.txt")).strip() or "attachment.txt"
+        mime_type = str(raw_item.get("mimeType", "")).strip()
+        data_base64 = str(raw_item.get("dataBase64", "")).strip()
+        size_bytes = int(raw_item.get("sizeBytes") or 0)
+        if not data_base64 or size_bytes > 5 * 1024 * 1024:
+            continue
+        try:
+            blob = _decode_base64(data_base64)
+            extracted = _extract_text_from_payload(name, mime_type, blob, "").strip()
+        except Exception:
+            LOGGER.exception("Could not read temporary Tutor attachment %s", name)
+            extracted = ""
+
+        metadata.append(
+            {
+                "name": name,
+                "mime_type": mime_type,
+                "size_bytes": size_bytes,
+                "has_extracted_text": bool(extracted),
+            }
+        )
+        if not extracted:
+            context_parts.append(
+                f"Attachment: {name}\nNo extractable text was found. Ask the user to paste the relevant text if needed."
+            )
+            continue
+
+        remaining_chars = max_text_chars - total_text_chars
+        if remaining_chars <= 0:
+            break
+        snippet = extracted[:remaining_chars]
+        total_text_chars += len(snippet)
+        context_parts.append(f"Attachment: {name}\n{snippet}")
+
+    if not context_parts:
+        return "", metadata
+
+    return (
+        "\n\nTemporary attachments for this Tutor message. Use them for this response only; "
+        "do not treat them as saved learner materials unless the user asks to save them.\n\n"
+        + "\n\n---\n\n".join(context_parts),
+        metadata,
+    )
+
+
 async def _run_agent(
     user_id: str,
     session_id: str,
@@ -1395,6 +1454,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 level=str(payload.get("level", "")).strip(),
                 available_time=payload.get("availableTime"),
                 deadline_days=payload.get("deadlineDays", 14),
+                start_date=str(payload.get("startDate", "")).strip(),
                 force_rebuild=bool(payload.get("forceRebuild", False)),
                 revision_reason=str(payload.get("revisionReason", "")).strip(),
             )
@@ -1621,10 +1681,18 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
             str(item) for item in (payload.get("selectedMaterialIds") or []) if str(item).strip()
         ]
         input_mode = str(payload.get("inputMode", "")).strip().lower()
+        temporary_attachment_context, temporary_attachment_metadata = _build_temporary_attachment_context(
+            payload.get("temporaryAttachments")
+        )
 
-        if not message:
+        if not message and not temporary_attachment_context:
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "Missing message."})
             return
+        agent_message = (
+            f"{message}\n\n{temporary_attachment_context}".strip()
+            if temporary_attachment_context
+            else message
+        )
 
         try:
             app_metrics["chat_requests"] += 1
@@ -1638,6 +1706,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                     "timezone": user_timezone,
                     "selected_material_ids": selected_material_ids,
                     "input_mode": input_mode,
+                    "temporary_attachments": temporary_attachment_metadata,
                 },
             )
             if _is_google_save_request(message):
@@ -1710,7 +1779,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                 reply = _run_agent_remote(
                     user_id=user_id,
                     session_id=session_id,
-                    message=message,
+                    message=agent_message,
                     user_timezone=user_timezone,
                     selected_material_ids=selected_material_ids,
                 )
@@ -1720,7 +1789,7 @@ class ArkAisHandler(SimpleHTTPRequestHandler):
                         _run_agent(
                             user_id=user_id,
                             session_id=session_id,
-                            message=message,
+                            message=agent_message,
                             user_timezone=user_timezone,
                             selected_material_ids=selected_material_ids,
                         ),

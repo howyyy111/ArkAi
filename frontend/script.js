@@ -10,6 +10,9 @@ import {
 const chatForm = document.getElementById("chat-form");
 const messages = document.getElementById("messages");
 const promptInput = document.getElementById("prompt");
+const tutorAttachmentInput = document.getElementById("tutor-attachment-input");
+const attachTutorFileButton = document.getElementById("attach-tutor-file-button");
+const tutorAttachmentsTray = document.getElementById("tutor-attachments");
 const newSessionButton = document.getElementById("new-session-button");
 const submitButton = document.getElementById("submit-button");
 const usernameModal = document.getElementById("username-modal");
@@ -29,6 +32,12 @@ const tutorIdentity = document.getElementById("tutor-identity");
 const stateTitle = document.getElementById("state-title");
 const stateSummary = document.getElementById("state-summary");
 const sidebarProgressSummary = document.getElementById("sidebar-progress-summary");
+const sideProgressTitle = document.getElementById("side-progress-title");
+const sideProgressDetail = document.getElementById("side-progress-detail");
+const sideProgressFill = document.getElementById("side-progress-fill");
+const sideProgressPercent = document.getElementById("side-progress-percent");
+const sideProgressLink = document.getElementById("side-progress-link");
+const sideProgressAction = document.getElementById("side-progress-action");
 const startDiagnosticButton = document.getElementById("start-diagnostic-button");
 const planHome = document.getElementById("plan-home");
 const diagnosticWorkspace = document.getElementById("diagnostic-workspace");
@@ -36,6 +45,7 @@ const roadmapWorkspace = document.getElementById("roadmap-workspace");
 const diagnosticTopicInput = document.getElementById("diagnostic-topic");
 const diagnosticGoalInput = document.getElementById("diagnostic-goal");
 const diagnosticTimeInput = document.getElementById("diagnostic-time");
+const diagnosticTimeUnitSelect = document.getElementById("diagnostic-time-unit");
 const diagnosticLevelSelect = document.getElementById("diagnostic-level");
 const diagnosticHomeStatus = document.getElementById("diagnostic-home-status");
 const assessmentStatus = document.getElementById("assessment-status");
@@ -50,7 +60,9 @@ const rebuildRoadmapButton = document.getElementById("rebuild-roadmap-button");
 const roadmapTopicInput = document.getElementById("roadmap-topic");
 const roadmapGoalInput = document.getElementById("roadmap-goal");
 const roadmapTimeInput = document.getElementById("roadmap-time");
+const roadmapTimeUnitSelect = document.getElementById("roadmap-time-unit");
 const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
+const roadmapStartDateInput = document.getElementById("roadmap-start-date");
 const roadmapHomeStatus = document.getElementById("roadmap-home-status");
 const roadmapStatus = document.getElementById("roadmap-status");
 const roadmapMode = document.getElementById("roadmap-mode");
@@ -100,6 +112,8 @@ const activeViewStorageKey = "arkai-active-view";
 const requestTimeoutMs = 90000;
 const maxMaterialFileSizeBytes = 5 * 1024 * 1024;
 const maxMaterialLibrarySizeBytes = 25 * 1024 * 1024;
+const maxTutorAttachmentCount = 3;
+const maxTutorAttachmentTotalBytes = 5 * 1024 * 1024;
 
 let authMode = "email_fallback";
 let firebaseAuthClient = null;
@@ -121,6 +135,7 @@ let previousSessionsExpanded = false;
 let selectedHistoryItemKey = "";
 let previousResourcesExpanded = false;
 let latestChatSessions = [];
+let pendingTutorAttachments = [];
 let activeSession = {
   userId: "",
   sessionId: "",
@@ -316,6 +331,89 @@ function validateSelectedFile(file, { fieldLabel = "File" } = {}) {
     return `${fieldLabel} is too large. Max size is ${formatFileSize(maxMaterialFileSizeBytes)}.`;
   }
   return null;
+}
+
+function getTimeInMinutes(input, unitSelect) {
+  normalizeTimeControlValue(input, unitSelect);
+  const rawValue = Number(input?.value || 0);
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return null;
+  }
+  const unit = unitSelect?.value === "hours" ? "hours" : "minutes";
+  const cappedValue = unit === "hours"
+    ? Math.min(24, rawValue)
+    : Math.min(60, rawValue);
+  return Math.max(1, Math.round(unit === "hours" ? cappedValue * 60 : cappedValue));
+}
+
+function syncTimeControl(input, unitSelect) {
+  if (!input || !unitSelect) {
+    return;
+  }
+  const isHours = unitSelect.value === "hours";
+  input.min = "1";
+  input.max = isHours ? "24" : "60";
+  input.step = "1";
+  input.placeholder = isHours ? "1" : "45";
+  input.removeAttribute("list");
+}
+
+function normalizeTimeControlValue(input, unitSelect) {
+  if (!input || !unitSelect || input.value === "") {
+    syncTimeControl(input, unitSelect);
+    return;
+  }
+
+  let rawValue = Number(input.value);
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    input.value = "";
+    syncTimeControl(input, unitSelect);
+    return;
+  }
+
+  const maxValue = unitSelect.value === "hours" ? 24 : 60;
+  input.value = String(Math.min(maxValue, Math.max(1, Math.round(rawValue))));
+  unitSelect.dataset.previousUnit = unitSelect.value || "minutes";
+  syncTimeControl(input, unitSelect);
+}
+
+function setupTimeControl(input, unitSelect) {
+  if (!input || !unitSelect) {
+    return;
+  }
+
+  unitSelect.dataset.previousUnit = unitSelect.value || "minutes";
+  syncTimeControl(input, unitSelect);
+
+  input.addEventListener("input", () => {
+    const maxValue = unitSelect.value === "hours" ? 24 : 60;
+    if (Number(input.value) > maxValue) {
+      normalizeTimeControlValue(input, unitSelect);
+    }
+  });
+  input.addEventListener("blur", () => normalizeTimeControlValue(input, unitSelect));
+  input.addEventListener("change", () => normalizeTimeControlValue(input, unitSelect));
+  unitSelect.addEventListener("change", () => {
+    const previousUnit = unitSelect.dataset.previousUnit || "minutes";
+    const rawValue = Number(input.value || 0);
+    if (Number.isFinite(rawValue) && rawValue > 0) {
+      if (previousUnit === "minutes" && unitSelect.value === "hours") {
+        input.value = String(Math.min(24, Math.max(1, Math.ceil(rawValue / 60))));
+      } else if (previousUnit === "hours" && unitSelect.value !== "hours") {
+        input.value = String(Math.min(60, Math.max(1, Math.round(rawValue * 60))));
+      }
+    }
+    unitSelect.dataset.previousUnit = unitSelect.value || "minutes";
+    normalizeTimeControlValue(input, unitSelect);
+  });
+}
+
+function normalizeRoadmapStatus(status) {
+  const normalizedStatus = String(status || "planned").trim().toLowerCase();
+  if (normalizedStatus === "completed" || normalizedStatus === "missed") {
+    return normalizedStatus;
+  }
+  return "planned";
 }
 
 function getCurrentLibraryUsageBytes() {
@@ -931,6 +1029,7 @@ async function refreshLearnerState() {
     stateTitle.textContent = "Start with one clear question";
     stateSummary.textContent = "Ask a question or continue a session.";
     refreshOverview();
+    refreshContinueLearningCard();
     return;
   }
 
@@ -963,11 +1062,13 @@ async function refreshLearnerState() {
     details.push(data.recommended_next_action || "Ask one focused question.");
     stateSummary.textContent = details.join(" • ");
     refreshOverview();
+    refreshContinueLearningCard();
   } catch (error) {
     latestLearnerState = null;
     stateTitle.textContent = "Your learning focus";
     stateSummary.textContent = "You can still ask the tutor a focused question.";
     refreshOverview();
+    refreshContinueLearningCard();
   }
 }
 
@@ -1264,6 +1365,7 @@ function renderRoadmapSessionDetail(session) {
   const durationText = session.duration_minutes ? `${session.duration_minutes} min` : "";
   const dueText = session.due_date ? (String(session.due_date).includes("ago") || session.due_date === "today" ? session.due_date : `Due ${session.due_date}`) : "";
   const focusText = session.focus || session.phaseGoal || "Study focus";
+  const status = normalizeRoadmapStatus(session.status);
   const explanation = session.phaseOutcome
     ? session.phaseOutcome
     : `Use this session to build confidence in ${focusText.toLowerCase()}.`;
@@ -1285,7 +1387,7 @@ function renderRoadmapSessionDetail(session) {
     <div class="roadmap-detail-meta">
       <span class="status-pill subtle">${escapeHtml(focusText)}</span>
       <span class="status-pill">${escapeHtml(session.phaseTitle || "Roadmap step")}</span>
-      <span class="status-pill">${escapeHtml(session.status || "planned")}</span>
+      <span class="status-pill status-${escapeHtml(status)}">${escapeHtml(session.status || "planned")}</span>
     </div>
     <div class="roadmap-detail-steps">
       <strong>How to use this</strong>
@@ -1332,6 +1434,7 @@ function renderRoadmap(roadmapResult) {
   const summary = roadmapResult?.summary || null;
   activeRoadmap = roadmap;
   activeRoadmapSummary = summary;
+  refreshContinueLearningCard();
 
   if (!roadmap || !summary) {
     roadmapMode.textContent = "No roadmap yet";
@@ -1382,21 +1485,8 @@ function renderRoadmap(roadmapResult) {
       <div class="roadmap-next-action">
         <div>
           <strong>Next up</strong>
-          <p>${escapeHtml(nextRoadmapSession.title)} • Preview it, then continue in Tutor.</p>
+          <p>${escapeHtml(nextRoadmapSession.title)} • Continue in Tutor when you are ready.</p>
         </div>
-        <button
-          class="ghost-button roadmap-open-button"
-          type="button"
-          data-preview-session="true"
-          data-session-key="${escapeHtml(nextRoadmapSession.key)}"
-          data-session-title="${escapeHtml(nextRoadmapSession.title)}"
-          data-session-focus="${escapeHtml(nextRoadmapSession.focus || "")}"
-          data-session-duration="${escapeHtml(nextRoadmapSession.duration_minutes || "")}"
-          data-phase-title="${escapeHtml(nextRoadmapSession.phaseTitle || "")}"
-          data-phase-goal="${escapeHtml(nextRoadmapSession.phaseGoal || "")}"
-        >
-          Preview
-        </button>
       </div>
       <p class="roadmap-progress-copy">${escapeHtml(progressText)}</p>
     `;
@@ -1407,36 +1497,40 @@ function renderRoadmap(roadmapResult) {
   roadmapBoard.innerHTML = roadmap.phases
     .map((phase) => {
       const sessionsMarkup = (phase.sessions || [])
-        .map(
-          (session) => `
+        .map((session) => {
+          const sessionKey = buildRoadmapSessionKey(phase.phase_id, session.session_id);
+          const status = normalizeRoadmapStatus(session.status);
+          const isSelected = sessionKey === selectedRoadmapSessionKey;
+          return `
             <article
-              class="roadmap-session${buildRoadmapSessionKey(phase.phase_id, session.session_id) === selectedRoadmapSessionKey ? " is-selected" : ""}"
+              class="roadmap-session${isSelected ? " is-selected" : ""}"
               tabindex="0"
               role="button"
               aria-label="Open ${escapeHtml(session.title)} brief"
               data-preview-session="true"
-              data-session-key="${escapeHtml(buildRoadmapSessionKey(phase.phase_id, session.session_id))}"
+              data-session-key="${escapeHtml(sessionKey)}"
+              data-session-status="${escapeHtml(status)}"
             >
               <div>
-                <strong>${session.title}</strong>
+                <strong>${escapeHtml(session.title)}</strong>
                 <p>${session.focus} • ${session.duration_minutes} min • due ${session.due_date}</p>
-                <p>${session.status}</p>
+                <p class="roadmap-session-status">${escapeHtml(session.status || "planned")}</p>
               </div>
               <div class="roadmap-session-actions">
                 <button
                   class="mini-button"
                   type="button"
                   data-preview-session="true"
-                  data-session-key="${escapeHtml(buildRoadmapSessionKey(phase.phase_id, session.session_id))}"
+                  data-session-key="${escapeHtml(sessionKey)}"
                 >
                   Preview
                 </button>
-                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="completed">Complete</button>
-                <button class="mini-button" type="button" data-phase-id="${phase.phase_id}" data-session-id="${session.session_id}" data-status="missed">Missed</button>
+                <button class="mini-button${status === "completed" ? " is-active-status" : ""}" type="button" data-phase-id="${escapeHtml(phase.phase_id)}" data-session-id="${escapeHtml(session.session_id)}" data-status="completed">Complete</button>
+                <button class="mini-button${status === "missed" ? " is-active-status" : ""}" type="button" data-phase-id="${escapeHtml(phase.phase_id)}" data-session-id="${escapeHtml(session.session_id)}" data-status="missed">Missed</button>
               </div>
             </article>
-          `
-        )
+          `;
+        })
         .join("");
 
       return `
@@ -1459,6 +1553,7 @@ function renderRoadmap(roadmapResult) {
     .join("");
 
   renderRoadmapSessionDetail(getActiveSessionDetail());
+  refreshContinueLearningCard();
 }
 
 async function refreshRoadmap() {
@@ -1526,16 +1621,16 @@ function renderMaterials(materials = []) {
   const latestMaterial = materials[0] || null;
   const previousMaterials = materials.slice(1);
   const renderMaterialCard = (material) => {
-      const checked = selectedMaterialIds.has(material.material_id) ? "checked" : "";
-      const selectedClass = checked ? " is-selected" : "";
-      const kindMeta = material.kind === "image"
-        ? `${material.metadata?.width || "?"}x${material.metadata?.height || "?"}`
-        : material.kind;
-      const sizeLabel = formatFileSize(material.metadata?.size_bytes);
-      const meta = [kindMeta, sizeLabel, `added ${formatMaterialTimeLabel(material.created_at)}`]
-        .filter(Boolean)
-        .join(" • ");
-      return `
+    const checked = selectedMaterialIds.has(material.material_id) ? "checked" : "";
+    const selectedClass = checked ? " is-selected" : "";
+    const kindMeta = material.kind === "image"
+      ? `${material.metadata?.width || "?"}x${material.metadata?.height || "?"}`
+      : material.kind;
+    const sizeLabel = formatFileSize(material.metadata?.size_bytes);
+    const meta = [kindMeta, sizeLabel, `added ${formatMaterialTimeLabel(material.created_at)}`]
+      .filter(Boolean)
+      .join(" • ");
+    return `
         <article class="material-card${selectedClass}">
           <header>
             <div>
@@ -1554,7 +1649,7 @@ function renderMaterials(materials = []) {
           <p class="material-card-meta">${meta}</p>
         </article>
       `;
-    };
+  };
 
   materialsLibrary.innerHTML = `
     ${latestMaterial ? `
@@ -1799,13 +1894,13 @@ function renderEvaluationSnapshot(snapshot) {
         <h4>${priorityItems.length ? "Do this next" : "Keep going"}</h4>
         <p class="state-summary insights-compact-copy">${priorityItems.length ? "Highest-impact actions right now." : "Enough signal. Continue your next session."}</p>
         ${priorityItems.length
-          ? `<div class="next-focus-list">${priorityItems.slice(0, 3).map((item, index) => `
+      ? `<div class="next-focus-list">${priorityItems.slice(0, 3).map((item, index) => `
               <div class="next-focus-item">
                 <span>${index + 1}</span>
                 <p>${escapeHtml(item)}</p>
               </div>
             `).join("")}</div>`
-          : `<div class="next-focus-list"><div class="next-focus-item"><span>1</span><p>Open your next Tutor session.</p></div></div>`}
+      : `<div class="next-focus-list"><div class="next-focus-item"><span>1</span><p>Open your next Tutor session.</p></div></div>`}
       </article>
     </div>
   `;
@@ -1903,6 +1998,61 @@ function refreshOverview() {
 
   if (sidebarProgressSummary) {
     sidebarProgressSummary.textContent = progressBits.join(" • ") || "No saved progress yet.";
+  }
+}
+
+function getContinueLearningSnapshot() {
+  const roadmap = activeRoadmap || latestLearnerState?.roadmap || null;
+  const summary = activeRoadmapSummary || latestLearnerState?.roadmap_summary || null;
+  if (!roadmap || !summary?.phase_count) {
+    return {
+      hasRoadmap: false,
+      title: "No roadmap yet",
+      detail: "Create a roadmap to track your next session.",
+      percent: 0,
+      action: "Create roadmap",
+    };
+  }
+
+  const totalSessions = Number(summary.total_sessions || 0);
+  const completedSessions = Number(summary.completed_sessions || 0);
+  const completionRate = Number.isFinite(Number(summary.completion_rate))
+    ? Number(summary.completion_rate)
+    : (totalSessions ? completedSessions / totalSessions : 0);
+  const percent = Math.max(0, Math.min(100, Math.round(completionRate * 100)));
+  const nextSession = summary.next_session?.title
+    ? summary.next_session
+    : findNextRoadmapSession(roadmap);
+  const title = roadmap.topic || roadmap.goal || (roadmap.mode ? `${roadmap.mode} roadmap` : "Current roadmap");
+  const detail = nextSession?.title
+    ? `Next: ${nextSession.title}`
+    : "All roadmap sessions are complete.";
+
+  return {
+    hasRoadmap: true,
+    title,
+    detail: `${detail} • ${completedSessions}/${totalSessions} sessions`,
+    percent,
+    action: "View roadmap",
+  };
+}
+
+function refreshContinueLearningCard() {
+  if (!sideProgressTitle || !sideProgressDetail || !sideProgressFill || !sideProgressPercent) {
+    return;
+  }
+  const snapshot = getContinueLearningSnapshot();
+  sideProgressTitle.textContent = snapshot.title;
+  sideProgressDetail.textContent = snapshot.detail;
+  sideProgressPercent.textContent = `${snapshot.percent}%`;
+  sideProgressFill.style.setProperty("--side-progress", `${snapshot.percent}%`);
+  if (sideProgressAction) {
+    const actionLabel = sideProgressAction.querySelector(".side-progress-action-label");
+    if (actionLabel) {
+      actionLabel.textContent = snapshot.action;
+    } else {
+      sideProgressAction.textContent = snapshot.action;
+    }
   }
 }
 
@@ -2075,7 +2225,7 @@ if (saveAssessmentGoogleDocButton) {
 
       assessmentStatus.textContent = "Mock test saved to Google Docs!";
       setTimeout(() => {
-          assessmentStatus.textContent = "";
+        assessmentStatus.textContent = "";
       }, 5000);
     } catch (err) {
       assessmentStatus.textContent = err.message;
@@ -2302,8 +2452,10 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
       idToken: getIdToken(),
       topic,
       goal: roadmapGoalInput.value.trim() || diagnosticGoalInput.value.trim(),
-      availableTime: roadmapTimeInput.value ? Number(roadmapTimeInput.value) : (diagnosticTimeInput.value ? Number(diagnosticTimeInput.value) : null),
+      availableTime: getTimeInMinutes(roadmapTimeInput, roadmapTimeUnitSelect)
+        || getTimeInMinutes(diagnosticTimeInput, diagnosticTimeUnitSelect),
       deadlineDays: roadmapDeadlineInput.value ? Number(roadmapDeadlineInput.value) : 14,
+      startDate: roadmapStartDateInput?.value || "",
       level: diagnosticLevelSelect.value,
       forceRebuild,
       revisionReason,
@@ -2313,14 +2465,14 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
   if (!response.ok || data.status !== "success") {
     throw new Error(data.error || data.message || "Could not generate roadmap.");
   }
-    renderRoadmap(data);
-    roadmapStatus.textContent = data.message || "Roadmap ready.";
-    if (roadmapHomeStatus) {
-      roadmapHomeStatus.textContent = "Roadmap ready. Use View roadmap anytime.";
-    }
-    await refreshLearnerState();
-    await refreshInsights();
+  renderRoadmap(data);
+  roadmapStatus.textContent = data.message || "Roadmap ready.";
+  if (roadmapHomeStatus) {
+    roadmapHomeStatus.textContent = "Roadmap ready. Use View roadmap anytime.";
   }
+  await refreshLearnerState();
+  await refreshInsights();
+}
 
 async function deleteCurrentRoadmap() {
   const username = ensureIdentity();
@@ -2480,6 +2632,103 @@ async function readFileAsDataUrl(file) {
     reader.onerror = () => reject(new Error("Could not read file."));
     reader.readAsDataURL(file);
   });
+}
+
+function validateTutorAttachmentFile(file) {
+  const baseError = validateSelectedFile(file, { fieldLabel: "Tutor attachment" });
+  if (baseError) {
+    return baseError;
+  }
+  const lowerName = String(file?.name || "").toLowerCase();
+  const supported = [".txt", ".md", ".csv", ".json", ".html", ".css", ".js", ".py"]
+    .some((suffix) => lowerName.endsWith(suffix));
+  const mime = String(file?.type || "");
+  if (!supported && !mime.startsWith("text/")) {
+    return "Tutor attachments currently support text, notes, code, CSV, JSON, HTML, CSS, JS, and Python files.";
+  }
+  return null;
+}
+
+function getTutorAttachmentTotalBytes(items = pendingTutorAttachments) {
+  return items.reduce((total, item) => total + Number(item.file?.size || 0), 0);
+}
+
+function renderTutorAttachments() {
+  if (!tutorAttachmentsTray) {
+    return;
+  }
+  tutorAttachmentsTray.innerHTML = "";
+  tutorAttachmentsTray.classList.toggle("hidden", pendingTutorAttachments.length === 0);
+  for (const attachment of pendingTutorAttachments) {
+    const chip = document.createElement("div");
+    chip.className = "tutor-attachment-chip";
+
+    const label = document.createElement("span");
+    label.textContent = `${attachment.file.name}${formatFileSize(attachment.file.size) ? ` - ${formatFileSize(attachment.file.size)}` : ""}`;
+    chip.appendChild(label);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.setAttribute("aria-label", `Remove ${attachment.file.name}`);
+    removeButton.dataset.removeTutorAttachment = attachment.id;
+    removeButton.textContent = "Remove";
+    chip.appendChild(removeButton);
+
+    tutorAttachmentsTray.appendChild(chip);
+  }
+}
+
+function addTutorAttachments(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) {
+    return;
+  }
+
+  const nextAttachments = [...pendingTutorAttachments];
+  for (const file of files) {
+    if (nextAttachments.length >= maxTutorAttachmentCount) {
+      setVoiceStatus(`Attach up to ${maxTutorAttachmentCount} files per Tutor message.`);
+      break;
+    }
+    const validationError = validateTutorAttachmentFile(file);
+    if (validationError) {
+      setVoiceStatus(validationError);
+      continue;
+    }
+    if (getTutorAttachmentTotalBytes(nextAttachments) + Number(file.size || 0) > maxTutorAttachmentTotalBytes) {
+      setVoiceStatus(`Keep Tutor attachments under ${formatFileSize(maxTutorAttachmentTotalBytes)} total.`);
+      continue;
+    }
+    nextAttachments.push({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      file,
+    });
+  }
+
+  pendingTutorAttachments = nextAttachments;
+  renderTutorAttachments();
+}
+
+function clearTutorAttachments() {
+  pendingTutorAttachments = [];
+  if (tutorAttachmentInput) {
+    tutorAttachmentInput.value = "";
+  }
+  renderTutorAttachments();
+}
+
+async function buildTemporaryAttachmentPayloads() {
+  const payloads = [];
+  for (const attachment of pendingTutorAttachments) {
+    const file = attachment.file;
+    payloads.push({
+      name: file.name,
+      mimeType: file.type || "text/plain",
+      sizeBytes: Number(file.size || 0),
+      dataBase64: await readFileAsDataUrl(file),
+    });
+  }
+  return payloads;
 }
 
 async function readFileAsText(file) {
@@ -2695,9 +2944,16 @@ if (viewRoadmapButton) {
   });
 }
 
+if (sideProgressAction) {
+  sideProgressAction.addEventListener("click", () => {
+    setActiveView("plan");
+    showPlanWorkspace(getContinueLearningSnapshot().hasRoadmap ? "roadmap" : "home");
+  });
+}
+
 if (deleteRoadmapButton) {
   deleteRoadmapButton.addEventListener("click", async () => {
-    const confirmed = window.confirm("Delete your current roadmap? This removes the saved plan for this account.");
+    const confirmed = window.confirm("Delete your current roadmap? This removes the saved roadmap for this account.");
     if (!confirmed) {
       return;
     }
@@ -2893,7 +3149,7 @@ askMaterialsButton.addEventListener("click", async () => {
     return;
   }
 
-    const query = materialQueryInput.value.trim() || promptInput.value.trim();
+  const query = materialQueryInput.value.trim() || promptInput.value.trim();
   if (!query) {
     materialsStatus.textContent = "Type one question first.";
     materialQueryInput.focus();
@@ -2989,7 +3245,7 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
     diagnosticTopicInput.value = data.topic || diagnosticTopicInput.value;
     showPlanWorkspace("diagnostic");
     assessmentStatus.textContent = "Mock test ready from your materials. You can submit it or save it to Google Docs.";
-    materialsStatus.textContent = "Mock test ready in Plan.";
+    materialsStatus.textContent = "Mock test ready in Roadmap.";
     materialsMockStyleFileInput.value = "";
     setActiveView("plan");
   } catch (error) {
@@ -3036,7 +3292,7 @@ startDiagnosticButton.addEventListener("click", async () => {
         idToken: getIdToken(),
         topic,
         goal: diagnosticGoalInput.value.trim(),
-        availableTime: diagnosticTimeInput.value ? Number(diagnosticTimeInput.value) : null,
+        availableTime: getTimeInMinutes(diagnosticTimeInput, diagnosticTimeUnitSelect),
         level: diagnosticLevelSelect.value,
         questionCount: 5,
       }),
@@ -3267,6 +3523,9 @@ focusTabs.forEach((tab) => {
   });
 });
 
+setupTimeControl(diagnosticTimeInput, diagnosticTimeUnitSelect);
+setupTimeControl(roadmapTimeInput, roadmapTimeUnitSelect);
+
 if (voiceInputButton) {
   voiceInputButton.addEventListener("click", () => {
     if (!speechRecognition) {
@@ -3292,6 +3551,30 @@ if (voiceReplyButton) {
   });
 }
 
+if (attachTutorFileButton && tutorAttachmentInput) {
+  attachTutorFileButton.addEventListener("click", () => {
+    tutorAttachmentInput.click();
+  });
+
+  tutorAttachmentInput.addEventListener("change", () => {
+    addTutorAttachments(tutorAttachmentInput.files);
+    tutorAttachmentInput.value = "";
+  });
+}
+
+if (tutorAttachmentsTray) {
+  tutorAttachmentsTray.addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-remove-tutor-attachment]");
+    if (!removeButton) {
+      return;
+    }
+    pendingTutorAttachments = pendingTutorAttachments.filter(
+      (attachment) => attachment.id !== removeButton.dataset.removeTutorAttachment
+    );
+    renderTutorAttachments();
+  });
+}
+
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -3300,13 +3583,30 @@ chatForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  const userPrompt = promptInput.value.trim();
-  if (!userPrompt) {
+  let userPrompt = promptInput.value.trim();
+  if (!userPrompt && !pendingTutorAttachments.length) {
     promptInput.focus();
     return;
   }
+  if (!userPrompt) {
+    userPrompt = "Please help me understand the attached file.";
+  }
 
-  appendMessage("user", userPrompt);
+  let temporaryAttachments = [];
+  try {
+    temporaryAttachments = await buildTemporaryAttachmentPayloads();
+  } catch (error) {
+    setVoiceStatus(error.message || "Could not read attached file.");
+    return;
+  }
+
+  const attachmentNames = pendingTutorAttachments.map((attachment) => attachment.file.name);
+  appendMessage(
+    "user",
+    attachmentNames.length
+      ? `${userPrompt}\n\nAttached: ${attachmentNames.join(", ")}`
+      : userPrompt
+  );
   promptInput.value = "";
 
   const payload = {
@@ -3317,8 +3617,10 @@ chatForm.addEventListener("submit", async (event) => {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     selectedMaterialIds: [...selectedMaterialIds],
     inputMode: pendingInputMode,
+    temporaryAttachments,
   };
   pendingInputMode = "text";
+  clearTutorAttachments();
 
   submitButton.disabled = true;
   submitButton.classList.add("loading");
