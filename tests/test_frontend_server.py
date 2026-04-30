@@ -14,10 +14,11 @@ from google.adk.sessions import Session
 
 
 class FrontendServerTests(unittest.TestCase):
-    def make_handler(self, cookie_header: str = ""):
+    def make_handler(self, cookie_header: str = "", path: str = "/api/session"):
         handler = object.__new__(frontend_server.ArkAisHandler)
         handler.headers = {"Cookie": cookie_header} if cookie_header else {}
         handler._pending_cookies = []
+        handler.path = path
         return handler
 
     def test_persistent_sessions_required_in_cloud_run(self):
@@ -69,6 +70,32 @@ class FrontendServerTests(unittest.TestCase):
         self.assertEqual(token, "secure-cookie")
         verify_session_cookie.assert_called_once()
         verify_id_token.assert_not_called()
+
+    def test_resolve_authenticated_user_allows_email_fallback_without_firebase_config(self):
+        with mock.patch.object(frontend_server, "_firebase_web_config", return_value=None):
+            user_id, token = frontend_server._resolve_authenticated_user(
+                {"userId": "Person@Example.com"},
+                {},
+            )
+
+        self.assertEqual(user_id, "person@example.com")
+        self.assertEqual(token, "email_fallback")
+
+    def test_resolve_authenticated_user_ignores_email_fallback_when_firebase_configured(self):
+        firebase_config = {
+            "apiKey": "key",
+            "authDomain": "example.firebaseapp.com",
+            "projectId": "project",
+            "appId": "app",
+        }
+        with mock.patch.object(frontend_server, "_firebase_web_config", return_value=firebase_config):
+            user_id, token = frontend_server._resolve_authenticated_user(
+                {"userId": "person@example.com"},
+                {},
+            )
+
+        self.assertEqual(user_id, "")
+        self.assertEqual(token, "")
 
     def test_resolve_request_context_uses_cookie_identity_and_session(self):
         handler = self.make_handler(
@@ -143,6 +170,37 @@ class FrontendServerTests(unittest.TestCase):
 
         self.assertEqual(context["user_id"], "guest:abc123")
         self.assertTrue(context["is_anonymous"])
+
+    def test_resolve_request_context_uses_query_user_for_email_fallback_gets(self):
+        handler = self.make_handler(path="/api/learner-state?userId=Person%40Example.com")
+        with mock.patch.object(frontend_server, "_firebase_web_config", return_value=None):
+            with mock.patch.object(
+                frontend_server,
+                "get_or_create_browser_identity",
+                return_value={
+                    "client_id": "client-123",
+                    "user_id": "person@example.com",
+                    "is_authenticated": True,
+                },
+            ) as get_identity:
+                with mock.patch.object(
+                    frontend_server,
+                    "get_or_create_chat_session",
+                    return_value={
+                        "session_id": "session-123",
+                        "client_id": "client-123",
+                        "user_id": "person@example.com",
+                    },
+                ):
+                    context = handler._resolve_request_context()
+
+        self.assertEqual(context["user_id"], "person@example.com")
+        self.assertFalse(context["is_anonymous"])
+        get_identity.assert_called_once_with(
+            client_id="",
+            authenticated_user_id="person@example.com",
+            reset_identity=False,
+        )
 
     def test_guest_user_payload_includes_expiry(self):
         payload = web_session_store._user_doc_payload("guest:abc123", now="2026-01-01T00:00:00+00:00")

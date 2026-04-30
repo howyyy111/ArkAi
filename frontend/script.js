@@ -19,6 +19,7 @@ const usernameModal = document.getElementById("username-modal");
 const closeModalButton = document.getElementById("close-modal-button");
 const usernameForm = document.getElementById("username-form");
 const usernameInput = document.getElementById("username-input");
+const usernameSubmit = document.getElementById("username-submit");
 const googleSigninButton = document.getElementById("google-signin-button");
 const authHelper = document.getElementById("auth-helper");
 const authPill = document.getElementById("auth-pill");
@@ -38,6 +39,7 @@ const sideProgressFill = document.getElementById("side-progress-fill");
 const sideProgressPercent = document.getElementById("side-progress-percent");
 const sideProgressLink = document.getElementById("side-progress-link");
 const sideProgressAction = document.getElementById("side-progress-action");
+const sidebarToggleButton = document.getElementById("sidebar-toggle-button");
 const startDiagnosticButton = document.getElementById("start-diagnostic-button");
 const planHome = document.getElementById("plan-home");
 const diagnosticWorkspace = document.getElementById("diagnostic-workspace");
@@ -63,6 +65,7 @@ const roadmapTimeInput = document.getElementById("roadmap-time");
 const roadmapTimeUnitSelect = document.getElementById("roadmap-time-unit");
 const roadmapDeadlineInput = document.getElementById("roadmap-deadline");
 const roadmapStartDateInput = document.getElementById("roadmap-start-date");
+const roadmapLevelSelect = document.getElementById("roadmap-level");
 const roadmapHomeStatus = document.getElementById("roadmap-home-status");
 const roadmapStatus = document.getElementById("roadmap-status");
 const roadmapMode = document.getElementById("roadmap-mode");
@@ -73,7 +76,6 @@ const viewRoadmapButton = document.getElementById("view-roadmap-button");
 const deleteRoadmapButton = document.getElementById("delete-roadmap-button");
 const saveRoadmapTasksButton = document.getElementById("save-roadmap-tasks-button");
 const materialFileInput = document.getElementById("material-file");
-const materialTextInput = document.getElementById("material-text");
 const materialQueryInput = document.getElementById("material-query");
 const materialsMockStructureInput = document.getElementById("materials-mock-structure");
 const materialsMockStyleInput = document.getElementById("materials-mock-style");
@@ -81,6 +83,7 @@ const materialsMockStyleFileInput = document.getElementById("materials-mock-styl
 const uploadMaterialButton = document.getElementById("upload-material-button");
 const askMaterialsButton = document.getElementById("ask-materials-button");
 const createMaterialsMockTestButton = document.getElementById("create-materials-mock-test-button");
+const downloadMaterialsMockTestButton = document.getElementById("download-materials-mock-test-button");
 const deleteAllMaterialsButton = document.getElementById("delete-all-materials-button");
 const materialsStatus = document.getElementById("materials-status");
 const materialsLibrary = document.getElementById("materials-library");
@@ -109,6 +112,7 @@ const historyListModal = document.getElementById("history-list-modal");
 const idTokenStorageKey = "arkai-id-token";
 const historyStorageKeyPrefix = "arkai-history-";
 const activeViewStorageKey = "arkai-active-view";
+const sidebarCollapsedStorageKey = "arkai-sidebar-collapsed";
 const requestTimeoutMs = 90000;
 const maxMaterialFileSizeBytes = 5 * 1024 * 1024;
 const maxMaterialLibrarySizeBytes = 25 * 1024 * 1024;
@@ -278,7 +282,40 @@ function buildAssessmentPdfBlob(assessment) {
 
 function updateAssessmentActions() {
   const hasAssessment = Boolean(activeAssessment?.assessment_id);
+  const hasMockAssessment = hasAssessment && activeAssessment?.assessment_type === "mock_test";
   saveAssessmentGoogleDocButton?.classList.toggle("hidden", !hasAssessment);
+  downloadMaterialsMockTestButton?.classList.toggle("hidden", !hasMockAssessment);
+}
+
+function downloadActiveAssessmentPdf() {
+  if (!activeAssessment?.assessment_id) {
+    materialsStatus.textContent = "Create a mock test first.";
+    return;
+  }
+  const blob = buildAssessmentPdfBlob(activeAssessment);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const filenameTopic = String(activeAssessment.topic || "mock-test")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "mock-test";
+  link.href = url;
+  link.download = `${filenameTopic}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  materialsStatus.textContent = "Mock test downloaded.";
+}
+
+function setSidebarCollapsed(collapsed) {
+  document.body.classList.toggle("sidebar-collapsed", Boolean(collapsed));
+  window.localStorage.setItem(sidebarCollapsedStorageKey, collapsed ? "1" : "0");
+  if (sidebarToggleButton) {
+    sidebarToggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
+    sidebarToggleButton.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    sidebarToggleButton.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  }
 }
 
 function buildHistoryItemKey(item) {
@@ -425,7 +462,7 @@ function updateMaterialsLibrarySummary() {
     return;
   }
   const used = getCurrentLibraryUsageBytes();
-  materialsLibrarySummary.textContent = `Files and notes ready for grounded Q&A. ${formatFileSize(used)} used of ${formatFileSize(maxMaterialLibrarySizeBytes)}. Max ${formatFileSize(maxMaterialFileSizeBytes)} each.`;
+  materialsLibrarySummary.textContent = `Upload and save files. Create a mock test when ready. ${formatFileSize(used)} used of ${formatFileSize(maxMaterialLibrarySizeBytes)}.`;
   if (deleteAllMaterialsButton) {
     deleteAllMaterialsButton.disabled = latestMaterials.length === 0;
   }
@@ -710,6 +747,19 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function getFallbackUserId() {
+  return sanitizeUsername(window.localStorage.getItem("arkai-fallback-user") || "");
+}
+
+function setFallbackUserId(value) {
+  const normalized = sanitizeUsername(value || "");
+  if (normalized) {
+    window.localStorage.setItem("arkai-fallback-user", normalized);
+  } else {
+    window.localStorage.removeItem("arkai-fallback-user");
+  }
+}
+
 function getUsername() {
   return sanitizeUsername(activeSession.userId || "");
 }
@@ -768,7 +818,7 @@ async function refreshSession(options = {}) {
 function openUsernameModal(prefill = true) {
   usernameModal.classList.add("open");
   usernameModal.setAttribute("aria-hidden", "false");
-  usernameInput.value = prefill ? getUsername() : "";
+  usernameInput.value = prefill ? getUsername() || getFallbackUserId() : "";
   usernameInput.setCustomValidity("");
   usernameInput.focus();
   usernameInput.select();
@@ -830,7 +880,7 @@ function setGoogleSavesStatus(text, connected = false) {
   }
   if (connectGoogleSavesButton) {
     connectGoogleSavesButton.textContent = connected ? "Reconnect" : "Connect";
-    connectGoogleSavesButton.disabled = Boolean(activeSession.isAnonymous);
+    connectGoogleSavesButton.disabled = Boolean(activeSession.isAnonymous) || authMode !== "firebase";
   }
 }
 
@@ -1608,7 +1658,7 @@ function formatMaterialTimeLabel(value) {
 function renderMaterials(materials = []) {
   latestMaterials = materials;
   if (!materials.length) {
-    materialsLibrary.innerHTML = `<p class="mastery-empty">Upload a file or paste notes to build your materials library.</p>`;
+    materialsLibrary.innerHTML = `<p class="mastery-empty">Upload a file to build your materials library.</p>`;
     updateMaterialsLibrarySummary();
     updateMaterialsSelectionSummary();
     refreshOverview();
@@ -1919,14 +1969,19 @@ function renderInterventionPlan(plan) {
     medium: "Watch closely",
     low: "On track",
   };
-  const riskLabel = riskLabelMap[plan.risk_level] || "Check-in needed";
+  const riskLabel = riskLabelMap[plan.risk_level] || "Review needed";
   const completedSessions = Number(plan.completed_sessions || 0);
   const masteryPercent = Number.isFinite(plan.overall_mastery)
     ? Math.round(Number(plan.overall_mastery) * 100)
     : 0;
-  const recommended = (plan.recommended_actions || [])[0] || "";
+  const rawRecommended = (plan.recommended_actions || [])[0] || "Start one focused task.";
+  const recommended = rawRecommended.length > 54
+    ? `${rawRecommended.slice(0, 51).trim()}...`
+    : rawRecommended;
   interventionRisk.textContent = riskLabel;
-  interventionSummary.textContent = `Mastery ${masteryPercent}% • ${completedSessions} session${completedSessions === 1 ? "" : "s"} done${recommended ? ` • Next: ${recommended}` : ""}`;
+  interventionSummary.textContent = completedSessions
+    ? `Mastery ${masteryPercent}%. ${completedSessions} done. Next: ${recommended}`
+    : "No sessions yet. Start with one focused task.";
   refreshOverview();
 }
 
@@ -2320,7 +2375,16 @@ function appendMessage(role, body, skipSave = false) {
 }
 
 function buildAuthHeaders() {
-  return {};
+  const headers = {};
+  const idToken = getIdToken();
+  if (idToken) {
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  const fallbackUserId = getFallbackUserId();
+  if (authMode !== "firebase" && fallbackUserId) {
+    headers["X-Arkais-User"] = fallbackUserId;
+  }
+  return headers;
 }
 
 async function createServerSession(idToken) {
@@ -2374,9 +2438,16 @@ async function bootstrapAuth() {
       updateAuthPill("Guest sessions enabled", true);
       googleSigninButton.disabled = true;
       googleSigninButton.textContent = "Firebase Auth not configured";
+      if (usernameSubmit) {
+        usernameSubmit.textContent = "Continue with email or guest";
+      }
       authHelper.textContent =
         "Add Firebase web config env vars to enable Google Sign-In. Until then, each browser keeps its own guest session.";
       return;
+    }
+
+    if (usernameSubmit) {
+      usernameSubmit.textContent = "Continue as guest";
     }
 
     const app = initializeApp(config.firebase);
@@ -2456,7 +2527,7 @@ async function submitRoadmapRequest({ forceRebuild = false, revisionReason = "" 
         || getTimeInMinutes(diagnosticTimeInput, diagnosticTimeUnitSelect),
       deadlineDays: roadmapDeadlineInput.value ? Number(roadmapDeadlineInput.value) : 14,
       startDate: roadmapStartDateInput?.value || "",
-      level: diagnosticLevelSelect.value,
+      level: roadmapLevelSelect?.value || diagnosticLevelSelect.value,
       forceRebuild,
       revisionReason,
     }),
@@ -2907,9 +2978,30 @@ googleSigninButton.addEventListener("click", async () => {
 usernameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   usernameInput.setCustomValidity("");
-  await refreshSession({ resetIdentity: true, resetSession: true });
+  const fallbackUserId = sanitizeUsername(usernameInput.value || "");
+  const useNamedFallback = Boolean(fallbackUserId);
+  if (useNamedFallback && authMode === "firebase") {
+    usernameInput.setCustomValidity("Use Continue with Google to sign in, or leave this empty for a private guest session.");
+    usernameInput.reportValidity();
+    return;
+  }
+  if (useNamedFallback && !isValidEmail(fallbackUserId)) {
+    usernameInput.setCustomValidity("Use an email address, or leave this empty for a private guest session.");
+    usernameInput.reportValidity();
+    return;
+  }
+  if (useNamedFallback) {
+    setFallbackUserId(fallbackUserId);
+  } else {
+    setFallbackUserId("");
+  }
+  await refreshSession({
+    resetIdentity: true,
+    resetSession: true,
+    userId: useNamedFallback ? fallbackUserId : "",
+  });
   setIdToken("");
-  updateAuthPill(activeSession.displayName || "Guest session", true);
+  updateAuthPill(activeSession.displayName || (useNamedFallback ? fallbackUserId : "Guest session"), true);
   closeUsernameModal();
   promptInput.focus();
   await refreshLearnerState();
@@ -2928,7 +3020,7 @@ generateRoadmapButton.addEventListener("click", async () => {
   }
 });
 
-rebuildRoadmapButton.addEventListener("click", async () => {
+rebuildRoadmapButton?.addEventListener("click", async () => {
   setActiveView("plan");
   try {
     await submitRoadmapRequest({ forceRebuild: true, revisionReason: "manual recovery rebuild" });
@@ -2948,6 +3040,12 @@ if (sideProgressAction) {
   sideProgressAction.addEventListener("click", () => {
     setActiveView("plan");
     showPlanWorkspace(getContinueLearningSnapshot().hasRoadmap ? "roadmap" : "home");
+  });
+}
+
+if (sidebarToggleButton) {
+  sidebarToggleButton.addEventListener("click", () => {
+    setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
   });
 }
 
@@ -3085,17 +3183,14 @@ uploadMaterialButton.addEventListener("click", async () => {
   }
 
   const file = materialFileInput.files?.[0] || null;
-  const pastedText = materialTextInput.value.trim();
-  const incomingBytes = file
-    ? Number(file.size || 0)
-    : new TextEncoder().encode(pastedText).length;
+  const incomingBytes = Number(file?.size || 0);
   const fileValidationError = validateSelectedFile(file, { fieldLabel: "Uploaded file" });
   if (fileValidationError) {
     materialsStatus.textContent = fileValidationError;
     return;
   }
-  if (!file && !pastedText) {
-    materialsStatus.textContent = "Add a file or paste notes first.";
+  if (!file) {
+    materialsStatus.textContent = "Choose a file first.";
     return;
   }
   if (getCurrentLibraryUsageBytes() + incomingBytes > maxMaterialLibrarySizeBytes) {
@@ -3116,10 +3211,10 @@ uploadMaterialButton.addEventListener("click", async () => {
       body: JSON.stringify({
         userId: username,
         idToken: getIdToken(),
-        name: file?.name || `pasted-notes-${Date.now()}.txt`,
-        mimeType: file?.type || "text/plain",
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
         dataBase64,
-        pastedText,
+        pastedText: "",
       }),
     });
     const data = await response.json();
@@ -3128,7 +3223,6 @@ uploadMaterialButton.addEventListener("click", async () => {
     }
     materialsStatus.textContent = `${data.material.name} is ready.`;
     materialFileInput.value = "";
-    materialTextInput.value = "";
     const dropZoneTitle = document.querySelector("#drop-zone .drop-zone-title");
     if (dropZoneTitle) {
       dropZoneTitle.textContent = "Drop file or browse";
@@ -3142,49 +3236,51 @@ uploadMaterialButton.addEventListener("click", async () => {
   }
 });
 
-askMaterialsButton.addEventListener("click", async () => {
-  setActiveView("materials");
-  const username = ensureIdentity();
-  if (!username) {
-    return;
-  }
-
-  const query = materialQueryInput.value.trim() || promptInput.value.trim();
-  if (!query) {
-    materialsStatus.textContent = "Type one question first.";
-    materialQueryInput.focus();
-    return;
-  }
-
-  materialsStatus.textContent = "Preparing answer from your selected source...";
-  try {
-    const response = await fetch("/api/materials/tutor", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildAuthHeaders(),
-      },
-      body: JSON.stringify({
-        userId: username,
-        idToken: getIdToken(),
-        query,
-        materialIds: [...selectedMaterialIds],
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status !== "success") {
-      throw new Error(data.error || data.message || "Could not answer from materials.");
+if (askMaterialsButton) {
+  askMaterialsButton.addEventListener("click", async () => {
+    setActiveView("materials");
+    const username = ensureIdentity();
+    if (!username) {
+      return;
     }
-    setActiveView("tutor");
-    appendMessage("user", `[Materials] ${query}`);
-    appendMessage("agent", data.answer);
-    materialsStatus.textContent = "Answer is ready in Tutor.";
-    await refreshLearnerState();
-    await refreshInsights();
-  } catch (error) {
-    materialsStatus.textContent = error.message;
-  }
-});
+
+    const query = materialQueryInput?.value?.trim() || promptInput.value.trim();
+    if (!query) {
+      materialsStatus.textContent = "Type one question first.";
+      materialQueryInput?.focus();
+      return;
+    }
+
+    materialsStatus.textContent = "Preparing answer from your selected source...";
+    try {
+      const response = await fetch("/api/materials/tutor", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAuthHeaders(),
+        },
+        body: JSON.stringify({
+          userId: username,
+          idToken: getIdToken(),
+          query,
+          materialIds: [...selectedMaterialIds],
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== "success") {
+        throw new Error(data.error || data.message || "Could not answer from materials.");
+      }
+      setActiveView("tutor");
+      appendMessage("user", `[Materials] ${query}`);
+      appendMessage("agent", data.answer);
+      materialsStatus.textContent = "Answer is ready in Tutor.";
+      await refreshLearnerState();
+      await refreshInsights();
+    } catch (error) {
+      materialsStatus.textContent = error.message;
+    }
+  });
+}
 
 createMaterialsMockTestButton.addEventListener("click", async () => {
   setActiveView("materials");
@@ -3224,7 +3320,7 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
         userId: username,
         idToken: getIdToken(),
         materialIds: [...selectedMaterialIds],
-        topic: materialQueryInput.value.trim(),
+        topic: materialQueryInput?.value?.trim() || latestMaterials.find((material) => selectedMaterialIds.has(material.material_id))?.name || "Uploaded materials",
         level: diagnosticLevelSelect.value,
         goal: "Practice from uploaded materials",
         questionCount: 5,
@@ -3244,8 +3340,8 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
     updateAssessmentActions();
     diagnosticTopicInput.value = data.topic || diagnosticTopicInput.value;
     showPlanWorkspace("diagnostic");
-    assessmentStatus.textContent = "Mock test ready from your materials. You can submit it or save it to Google Docs.";
-    materialsStatus.textContent = "Mock test ready in Roadmap.";
+    assessmentStatus.textContent = "Mock test ready from your materials. Submit it, save it to Google Docs, or download it from Materials.";
+    materialsStatus.textContent = "Mock test ready. Download it when you are ready.";
     materialsMockStyleFileInput.value = "";
     setActiveView("plan");
   } catch (error) {
@@ -3255,6 +3351,10 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
   }
 });
 
+downloadMaterialsMockTestButton?.addEventListener("click", () => {
+  downloadActiveAssessmentPdf();
+});
+
 startDiagnosticButton.addEventListener("click", async () => {
   setActiveView("plan");
   const username = ensureIdentity();
@@ -3262,14 +3362,22 @@ startDiagnosticButton.addEventListener("click", async () => {
     return;
   }
 
-  const topic = diagnosticTopicInput.value.trim();
+  const topic = diagnosticTopicInput.value.trim() || roadmapTopicInput.value.trim();
   if (!topic) {
     if (diagnosticHomeStatus) {
       diagnosticHomeStatus.textContent = "Choose a topic first.";
     }
     assessmentStatus.textContent = "Choose a topic first so the diagnostic can be personalized.";
-    diagnosticTopicInput.focus();
+    roadmapTopicInput.focus();
     return;
+  }
+  diagnosticTopicInput.value = topic;
+  if (!diagnosticGoalInput.value.trim() && roadmapGoalInput.value.trim()) {
+    diagnosticGoalInput.value = roadmapGoalInput.value.trim();
+  }
+  if (!diagnosticTimeInput.value && roadmapTimeInput.value) {
+    diagnosticTimeInput.value = roadmapTimeInput.value;
+    diagnosticTimeUnitSelect.value = roadmapTimeUnitSelect.value;
   }
 
   startDiagnosticButton.disabled = true;
@@ -3514,6 +3622,7 @@ deleteAllMaterialsButton.addEventListener("click", async () => {
 focusTabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     setActiveView(tab.dataset.viewTarget);
+    setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
     if (tab.dataset.viewTarget === "plan") {
       showPlanWorkspace("home");
     }
@@ -3663,6 +3772,7 @@ chatForm.addEventListener("submit", async (event) => {
 await bootstrapAuth();
 await refreshSession();
 setupVoiceRecognition();
+setSidebarCollapsed(window.localStorage.getItem(sidebarCollapsedStorageKey) === "1");
 setActiveView(window.localStorage.getItem(activeViewStorageKey) || "tutor");
 showPlanWorkspace("home");
 showInsightsWorkspace("home");

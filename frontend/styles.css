@@ -1856,37 +1856,6 @@ textarea:focus {
     gap: 6px;
 }
 
-.upload-choice-divider {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: 10px;
-    color: rgba(79, 74, 67, 0.66);
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-}
-
-.upload-choice-divider::before,
-.upload-choice-divider::after {
-    content: "";
-    height: 1px;
-    background: rgba(28, 28, 28, 0.1);
-}
-
-.upload-choice-divider span {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 34px;
-    min-height: 24px;
-    padding: 0 8px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.74);
-    border: 1px solid rgba(28, 28, 28, 0.08);
-}
-
 .focus-view[data-view="materials"] textarea {
     min-height: 76px;
     max-height: 132px;
@@ -6496,4 +6465,172 @@ body *:not(code):not(pre):not(kbd):not(samp):not(.hljs):not(.material-symbols-ou
     background: #eff6ff !important;
     color: #1d4ed8 !important;
     line-height: 1.45 !important;
+}
+
+/* Diff comment pass: collapsible sidebar and simpler Plan/Materials flows. */
+.sidebar-toggle-button {
+    width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    margin: -14px auto 4px 4px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    cursor: pointer !important;
+}
+
+.sidebar-toggle-button:hover {
+    background: #f9fafb !important;
+    border-color: #d1d5db !important;
+}
+
+.sidebar-toggle-button svg {
+    width: 19px !important;
+    height: 19px !important;
+    transition: transform 160ms ease !important;
+}
+
+body.sidebar-collapsed .main-layout {
+    margin-left: 104px !important;
+}
+
+body.sidebar-collapsed .side-nav-panel {
+    width: 72px !important;
+    padding: 18px 8px !important;
+}
+
+body.sidebar-collapsed .sidebar-toggle-button {
+    margin: 0 auto 6px !important;
+}
+
+body.sidebar-collapsed .sidebar-toggle-button svg {
+    transform: rotate(180deg) !important;
+}
+
+body.sidebar-collapsed .side-nav-panel .topbar-tab {
+    min-height: 50px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+}
+
+body.sidebar-collapsed .side-nav-panel .topbar-tab strong,
+body.sidebar-collapsed .sidebar-bottom {
+    display: none !important;
+}
+
+.focus-view[data-view="plan"] #diagnostics {
+    display: none !important;
+}
+
+.focus-view[data-view="plan"] #plan-home {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+        "roadmap"
+        "plans" !important;
+}
+
+.focus-view[data-view="plan"] #roadmaps {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 18px !important;
+    align-items: start !important;
+}
+
+.focus-view[data-view="plan"] #roadmaps .section-head {
+    grid-column: 1 / -1 !important;
+}
+
+.focus-view[data-view="plan"] #roadmaps .assessment-grid {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.focus-view[data-view="materials"] .materials-workspace {
+    grid-template-columns: minmax(330px, 0.72fr) minmax(0, 1.58fr) !important;
+}
+
+.focus-view[data-view="materials"] .materials-sidebar {
+    gap: 14px !important;
+}
+
+.focus-view[data-view="materials"] .materials-sidebar>.state-strip {
+    display: none !important;
+}
+
+.focus-view[data-view="materials"] .materials-action-card {
+    gap: 14px !important;
+}
+
+.focus-view[data-view="materials"] .materials-action-card .materials-card-head {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: start !important;
+}
+
+.focus-view[data-view="materials"] .materials-action-card .field-note {
+    max-width: 150px !important;
+    margin: 0 !important;
+    text-align: right !important;
+}
+
+.focus-view[data-view="materials"] .materials-settings summary {
+    justify-content: flex-start !important;
+}
+
+.focus-view[data-view="materials"] .materials-settings summary span {
+    font-size: 0.98rem !important;
+}
+
+.focus-view[data-view="materials"] #download-materials-mock-test-button:not(.hidden) {
+    display: inline-flex !important;
+}
+
+#intervention-summary {
+    font-size: 0.98rem !important;
+    line-height: 1.45 !important;
+}
+
+@media (max-width: 980px) {
+    .sidebar-toggle-button {
+        display: none !important;
+    }
+
+    body.sidebar-collapsed .main-layout {
+        margin-left: 0 !important;
+    }
+
+    body.sidebar-collapsed .side-nav-panel {
+        width: auto !important;
+        padding: 8px !important;
+    }
+
+    body.sidebar-collapsed .side-nav-panel .topbar-tab strong,
+    body.sidebar-collapsed .sidebar-bottom {
+        display: initial !important;
+    }
+}
+
+@media (max-width: 760px) {
+    .focus-view[data-view="plan"] #roadmaps {
+        grid-template-columns: 1fr !important;
+    }
+
+    .focus-view[data-view="plan"] #roadmaps .assessment-grid {
+        grid-column: 1 !important;
+        grid-row: auto !important;
+    }
+
+    .focus-view[data-view="plan"] #roadmaps .assessment-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .focus-view[data-view="materials"] .materials-workspace {
+        grid-template-columns: 1fr !important;
+    }
 }

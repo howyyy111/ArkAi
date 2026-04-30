@@ -71,8 +71,16 @@
                     </div>
                     <p>Adaptive learning assistant</p>
                 </div>
+                <button id="sidebar-toggle-button" class="sidebar-toggle-button" type="button"
+                    aria-label="Collapse sidebar" aria-pressed="false" title="Toggle sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M15 18 9 12l6-6"></path>
+                    </svg>
+                </button>
                 <nav class="sidebar-nav topbar-nav">
-                    <button class="focus-tab topbar-tab is-active" type="button" data-view-target="tutor">
+                    <button class="focus-tab topbar-tab is-active" type="button" data-view-target="tutor"
+                        aria-label="Tutor">
                         <span class="nav-icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -83,7 +91,7 @@
                         </span>
                         <strong>Tutor</strong>
                     </button>
-                    <button class="focus-tab topbar-tab" type="button" data-view-target="plan">
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="plan" aria-label="Plan">
                         <span class="nav-icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -96,7 +104,8 @@
                         </span>
                         <strong>Plan</strong>
                     </button>
-                    <button class="focus-tab topbar-tab" type="button" data-view-target="materials">
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="materials"
+                        aria-label="Materials">
                         <span class="nav-icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -107,7 +116,8 @@
                         </span>
                         <strong>Materials</strong>
                     </button>
-                    <button class="focus-tab topbar-tab" type="button" data-view-target="insights">
+                    <button class="focus-tab topbar-tab" type="button" data-view-target="insights"
+                        aria-label="Insights">
                         <span class="nav-icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -285,7 +295,7 @@
                                     </div>
                                     <div class="inline-actions plan-card-actions">
                                         <button id="view-roadmap-button" class="ghost-button mini-button" type="button"
-                                            disabled>View roadmap</button>
+                                            disabled>Open saved roadmap</button>
                                         <button id="delete-roadmap-button"
                                             class="ghost-button mini-button subtle-action" type="button"
                                             disabled>Delete</button>
@@ -344,13 +354,12 @@
                                         <div>
                                             <p class="section-label">Roadmap</p>
                                             <h3>Roadmap</h3>
-                                            <p class="state-summary">Create sessions you can open in Tutor.</p>
+                                            <p class="state-summary">Choose your topic, level, and study time. Create
+                                                saves the roadmap below.</p>
                                         </div>
                                         <div class="inline-actions plan-action-stack">
                                             <button id="generate-roadmap-button" class="primary-button"
                                                 type="button">Create</button>
-                                            <button id="rebuild-roadmap-button" class="ghost-button" type="button"
-                                                disabled>Replace</button>
                                         </div>
                                     </div>
                                     <div class="assessment-grid">
@@ -377,6 +386,14 @@
                                             <span>Days to goal</span>
                                             <input id="roadmap-deadline" type="number" min="7" max="60" step="1"
                                                 placeholder="14" />
+                                        </label>
+                                        <label>
+                                            <span>Level</span>
+                                            <select id="roadmap-level">
+                                                <option value="beginner">Beginner</option>
+                                                <option value="intermediate">Intermediate</option>
+                                                <option value="advanced">Advanced</option>
+                                            </select>
                                         </label>
                                     </div>
                                     <p id="roadmap-home-status" class="assessment-status"></p>
@@ -441,12 +458,11 @@
                             <aside class="materials-sidebar">
                                 <section class="state-strip panel-lite">
                                     <div>
-                                        <p class="section-label">Grounded study</p>
+                                        <p class="section-label">Materials</p>
                                         <h3>Materials library</h3>
                                     </div>
-                                    <p class="state-summary">Upload notes, choose sources, then send answers to
-                                        Tutor or
-                                        tests to Plan.</p>
+                                    <p class="state-summary">Upload a file, save it, create a mock test, then download
+                                        it.</p>
                                 </section>
 
                                 <section class="content-card panel-lite helper-card upload-card">
@@ -475,16 +491,6 @@
                                             accept=".txt,.md,.csv,.json,.html,.css,.js,.py,.png,.jpg,.jpeg,.webp" />
                                     </label>
 
-                                    <div class="upload-choice-divider" aria-hidden="true">
-                                        <span>or</span>
-                                    </div>
-
-                                    <label>
-                                        <span class="eyebrow">Paste text</span>
-                                        <textarea id="material-text" rows="4"
-                                            placeholder="Paste lecture notes, syllabus, or snippets here."></textarea>
-                                    </label>
-
                                     <button id="upload-material-button" class="primary-button wide-button"
                                         type="button">Upload material</button>
                                 </section>
@@ -492,29 +498,18 @@
                                 <section class="content-card panel-lite helper-card materials-action-card">
                                     <div class="materials-card-head">
                                         <div>
-                                            <p class="section-label">Use sources</p>
-                                            <h4>Ask or practice</h4>
+                                            <p class="section-label">Mock test</p>
+                                            <h4>Create and download</h4>
                                         </div>
                                         <div id="materials-selection-summary" class="state-summary field-note">
                                             No
                                             materials selected.</div>
                                     </div>
-
-                                    <label>
-                                        <span class="eyebrow">Question for materials</span>
-                                        <input id="material-query" type="text"
-                                            placeholder="Explain this document in simple terms" />
-                                    </label>
-
-                                    <div class="materials-action-grid">
-                                        <button id="ask-materials-button" class="primary-button wide-button"
-                                            type="button">Ask in Tutor</button>
-                                    </div>
+                                    <input id="material-query" type="hidden" />
 
                                     <details class="materials-settings">
                                         <summary>
                                             <span>Mock test settings</span>
-                                            <strong>Optional</strong>
                                         </summary>
                                         <div class="materials-settings-body">
                                             <label>
@@ -543,8 +538,12 @@
                                         <button id="create-materials-mock-test-button" class="ghost-button wide-button"
                                             type="button">Create mock
                                             test</button>
+                                        <button id="download-materials-mock-test-button"
+                                            class="ghost-button wide-button hidden" type="button">Download mock
+                                            test</button>
                                     </div>
-                                    <div id="materials-status" class="assessment-status">Upload notes, then ask.
+                                    <div id="materials-status" class="assessment-status">Upload notes, then create a
+                                        mock test.
                                     </div>
                                 </section>
                             </aside>
@@ -557,17 +556,14 @@
                                         <h3>Your uploaded materials</h3>
                                     </div>
                                     <div class="inline-actions">
-                                        <p id="materials-library-summary" class="state-summary">Files and notes
-                                            ready
-                                            for grounded Q&amp;A. Max 5 MB each, 25 MB total.</p>
+                                        <p id="materials-library-summary" class="state-summary">Upload and save files.
+                                            Create a mock test when ready. Max 5 MB each, 25 MB total.</p>
                                         <button id="delete-all-materials-button" class="ghost-button" type="button"
                                             disabled>Delete all</button>
                                     </div>
                                 </div>
                                 <div id="materials-library" class="materials-library">
-                                    <p class="mastery-empty">Upload a file or paste notes to build your
-                                        materials
-                                        library.</p>
+                                    <p class="mastery-empty">Upload a file to build your materials library.</p>
                                 </div>
                             </section>
                         </div>
@@ -726,9 +722,9 @@
                 </p>
             </div>
             <form id="username-form" class="modal-form fallback-form">
-                <input id="username-input" name="username" type="text" maxlength="120" placeholder="Optional note"
+                <input id="username-input" name="username" type="email" maxlength="120" placeholder="name@example.com"
                     autocomplete="email" />
-                <button id="username-submit" class="ghost-button" type="submit">Continue as guest</button>
+                <button id="username-submit" class="ghost-button" type="submit">Continue with email or guest</button>
             </form>
         </div>
     </div>
