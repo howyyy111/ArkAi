@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import secrets
+import sqlite3
+from typing import Any
 import zoneinfo
 from mcp.server.fastmcp import FastMCP
 
@@ -56,6 +58,7 @@ from pygments.token import Token
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
 TOKEN_PATH = BASE_DIR / "token.json"
 USER_GOOGLE_TOKENS_DIR = BASE_DIR / "user_google_tokens"
+SQLITE_DB_PATH = BASE_DIR / "learning_agent.db"
 AUTH_CALLBACK_CREDENTIAL_PATHS = (
     CREDENTIALS_PATH,
     BASE_DIR.parent / "auth_function" / "credentials.json",
