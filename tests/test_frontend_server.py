@@ -9,6 +9,7 @@ os.environ.pop("K_SERVICE", None)
 
 import frontend_server
 from ark_learning_agent.firestore_session_service import FirestoreSessionService
+from ark_learning_agent import productivity_mcp_server
 from ark_learning_agent import web_session_store
 from google.adk.sessions import Session
 
@@ -211,6 +212,31 @@ class FrontendServerTests(unittest.TestCase):
         payload = web_session_store._user_doc_payload("person@example.com", now="2026-01-01T00:00:00+00:00")
         self.assertFalse(payload["is_anonymous"])
         self.assertNotIn("expires_at", payload)
+
+    def test_google_status_rejects_legacy_access_token_without_expiry(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_dir = os.path.join(tmpdir, "tokens")
+            os.makedirs(token_dir, exist_ok=True)
+            token_path = os.path.join(token_dir, "person@example.com.json")
+            with open(token_path, "w", encoding="utf-8") as handle:
+                handle.write('{"token": "legacy-token", "scopes": ["https://www.googleapis.com/auth/drive.file"]}')
+
+            with mock.patch.object(productivity_mcp_server, "USER_GOOGLE_TOKENS_DIR", productivity_mcp_server.Path(token_dir)):
+                status = productivity_mcp_server.google_oauth_status("person@example.com")
+
+        self.assertFalse(status["connected"])
+
+    def test_google_access_token_persist_includes_default_expiry(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_dir = os.path.join(tmpdir, "tokens")
+            with mock.patch.object(productivity_mcp_server, "USER_GOOGLE_TOKENS_DIR", productivity_mcp_server.Path(token_dir)):
+                result = productivity_mcp_server.persist_google_access_token("person@example.com", "token-value")
+                token_path = os.path.join(token_dir, "person@example.com.json")
+                with open(token_path, encoding="utf-8") as handle:
+                    payload = handle.read()
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn('"expiry"', payload)
 
     def test_firestore_session_service_namespaces_adk_payload(self):
         service = FirestoreSessionService()

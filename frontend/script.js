@@ -135,6 +135,7 @@ const maxTutorAttachmentTotalBytes = 5 * 1024 * 1024;
 let authMode = "email_fallback";
 let firebaseAuthClient = null;
 let googleProvider = null;
+let googleSavesProvider = null;
 let activeAssessment = null;
 let activeRoadmap = null;
 let activeRoadmapSummary = null;
@@ -159,6 +160,7 @@ let pendingTutorAttachments = [];
 let googleSavesConnected = false;
 let googleSavesConnectionInProgress = false;
 let googleSavesSetupReady = true;
+let hostedGoogleOauthReady = false;
 let activeSession = {
   userId: "",
   sessionId: "",
@@ -989,6 +991,7 @@ async function refreshGoogleSavesStatus() {
       throw new Error(data.error || data.message || "Could not check Google saves.");
     }
     googleSavesSetupReady = data.setup_ready !== false;
+    hostedGoogleOauthReady = Boolean(data.hosted_oauth_ready);
     if (!googleSavesSetupReady) {
       setGoogleSavesStatus(data.message || "Google saves is not configured", false);
       return data;
@@ -1048,7 +1051,7 @@ async function connectGoogleSavesWithAccessToken(accessToken, { expiresIn = null
 }
 
 async function connectGoogleSavesWithFirebasePopup({ askFirst = true } = {}) {
-  if (!firebaseAuthClient || !googleProvider) {
+  if (!firebaseAuthClient || !googleSavesProvider) {
     throw new Error("Google Sign-In is not ready yet.");
   }
   if (askFirst) {
@@ -1062,7 +1065,7 @@ async function connectGoogleSavesWithFirebasePopup({ askFirst = true } = {}) {
   googleSavesConnectionInProgress = true;
   setGoogleSavesStatus("Opening Google permission screen...", false);
   try {
-    const result = await signInWithPopup(firebaseAuthClient, googleProvider);
+    const result = await signInWithPopup(firebaseAuthClient, googleSavesProvider);
     if (result?.user) {
       const idToken = await result.user.getIdToken();
       await createServerSession(idToken);
@@ -1088,6 +1091,11 @@ async function connectGoogleSaves({ askFirst = true, forceReconnect = false } = 
     openUsernameModal(false);
     return;
   }
+  const currentStatus = await refreshGoogleSavesStatus();
+  if (currentStatus.connected && !forceReconnect) {
+    authHelper.textContent = "Google saves connected. Docs, Calendar, and Tasks are ready.";
+    return;
+  }
   if (askFirst) {
     const approved = window.confirm(
       "Connect Google saves for this ArkAI account? ArkAI will ask Google for permission to create study docs, tasks, and calendar events when you request them."
@@ -1095,6 +1103,15 @@ async function connectGoogleSaves({ askFirst = true, forceReconnect = false } = 
     if (!approved) {
       setGoogleSavesStatus("Not connected", false);
       return;
+    }
+  }
+
+  if (!hostedGoogleOauthReady && firebaseAuthClient && googleSavesProvider) {
+    try {
+      await connectGoogleSavesWithFirebasePopup({ askFirst: false });
+      return;
+    } catch (error) {
+      console.warn("Firebase Google saves connection failed; trying hosted OAuth callback.", error);
     }
   }
 
@@ -3125,10 +3142,12 @@ function friendlyFirebaseAuthError(error) {
 }
 
 async function createServerSession(idToken) {
+  setIdToken(idToken);
   const response = await fetch("/api/auth/session", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...buildAuthHeaders(),
     },
     body: JSON.stringify({ idToken }),
   });
@@ -3138,7 +3157,6 @@ async function createServerSession(idToken) {
   }
   applySession(data);
   shouldClearServerSessionOnFirebaseSignOut = true;
-  setIdToken("");
   return data;
 }
 
@@ -3199,8 +3217,10 @@ async function bootstrapAuth() {
     const app = initializeApp(config.firebase);
     firebaseAuthClient = getAuth(app);
     googleProvider = new GoogleAuthProvider();
-    googleSavesScopes.forEach((scope) => googleProvider.addScope(scope));
     googleProvider.setCustomParameters({ prompt: "select_account" });
+    googleSavesProvider = new GoogleAuthProvider();
+    googleSavesScopes.forEach((scope) => googleSavesProvider.addScope(scope));
+    googleSavesProvider.setCustomParameters({ prompt: "select_account consent" });
 
     onAuthStateChanged(firebaseAuthClient, async (user) => {
       if (!user) {
@@ -3813,12 +3833,9 @@ googleSigninButton.addEventListener("click", async () => {
       await createServerSession(idToken);
       closeUsernameModal();
       updateAuthPill(result.user.email || activeSession.displayName || "Signed in", false);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        await connectGoogleSavesWithAccessToken(credential.accessToken);
-      } else {
-        await refreshGoogleSavesStatus();
-        await connectGoogleSaves({ askFirst: true });
+      const status = await refreshGoogleSavesStatus();
+      if (!status.connected && authHelper) {
+        authHelper.textContent = "Signed in. Use Connect under Google saves when you want Docs, Tasks, and Calendar saves.";
       }
     }
     promptInput.focus();

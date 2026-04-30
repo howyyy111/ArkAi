@@ -194,12 +194,13 @@ def persist_google_access_token(user_id: str, access_token: str, expires_in: int
     if not token:
         return {"status": "error", "message": "Missing Google access token."}
 
-    expires_at = None
-    if expires_in:
-        try:
-            expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=max(60, int(expires_in)))
-        except (TypeError, ValueError):
-            expires_at = None
+    try:
+        lifetime_seconds = int(expires_in) if expires_in else 3300
+        expires_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) + datetime.timedelta(
+            seconds=max(60, lifetime_seconds)
+        )
+    except (TypeError, ValueError):
+        expires_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) + datetime.timedelta(seconds=3300)
 
     creds = Credentials(
         token=token,
@@ -237,10 +238,40 @@ def google_oauth_status(user_id: str) -> dict:
         doc_ref = _user_google_oauth_doc(normalized_user_id)
         if doc_ref:
             doc = doc_ref.get()
-            has_credentials = doc.exists
+            if doc.exists:
+                payload = doc.to_dict() or {}
+                try:
+                    creds = _credentials_from_payload(payload)
+                    if creds and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                        _persist_google_credentials(normalized_user_id, creds)
+                        has_credentials = True
+                    else:
+                        # Access-token-only Firebase grants are usable only when they
+                        # carry an expiry. Older persisted grants without refresh tokens
+                        # can look connected forever but fail when the app saves.
+                        has_credentials = bool(
+                            creds
+                            and creds.valid
+                            and (payload.get("refresh_token") or payload.get("expiry"))
+                        )
+                except Exception:
+                    has_credentials = False
     
     if not has_credentials:
-        has_credentials = _user_google_token_path(normalized_user_id).is_file()
+        try:
+            token_path = _user_google_token_path(normalized_user_id)
+            payload = {}
+            if token_path.is_file():
+                payload = json.loads(token_path.read_text(encoding="utf-8"))
+            creds = _credentials_from_payload(payload) if payload else None
+            has_credentials = bool(
+                creds
+                and creds.valid
+                and (payload.get("refresh_token") or payload.get("expiry"))
+            )
+        except Exception:
+            has_credentials = False
 
     return {
         "status": "success",

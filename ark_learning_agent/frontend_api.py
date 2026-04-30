@@ -281,6 +281,7 @@ def _verify_firebase_id_token_email(id_token: str) -> str:
 
 def _resolve_authenticated_user(payload: dict[str, Any], request: Request) -> tuple[str, str]:
     session_cookie = _session_cookie_token(request.cookies)
+    id_token = str(payload.get("idToken", "")).strip() or _authorization_token(request.headers)
     if session_cookie:
         try:
             _firebase_admin_app()
@@ -290,9 +291,9 @@ def _resolve_authenticated_user(payload: dict[str, Any], request: Request) -> tu
                 raise PermissionError("Firebase session did not include an email address.")
             return email, session_cookie
         except Exception as exc:
-            raise PermissionError(f"Invalid Firebase session cookie: {exc}") from exc
+            if not id_token:
+                raise PermissionError(f"Invalid Firebase session cookie: {exc}") from exc
 
-    id_token = str(payload.get("idToken", "")).strip() or _authorization_token(request.headers)
     if not id_token:
         fallback_user_id = _fallback_user_id_from_request(payload, request.headers)
         return fallback_user_id, "email_fallback" if fallback_user_id else ""
@@ -1336,21 +1337,25 @@ async def api_google_status(request: Request, response: Response):
             "status": "success",
             "connected": False,
             "setup_ready": google_saves_setup_ready,
+            "hosted_oauth_ready": oauth_setup_ready,
             "message": "Sign in with Google to connect saves.",
         }
     from .productivity_mcp_server import google_oauth_status
     result = await asyncio.to_thread(google_oauth_status, context["user_id"])
     if result.get("connected"):
         result["setup_ready"] = google_saves_setup_ready
+        result["hosted_oauth_ready"] = oauth_setup_ready
         return result
     if not google_saves_setup_ready:
         return {
             "status": "success",
             "connected": False,
             "setup_ready": False,
+            "hosted_oauth_ready": oauth_setup_ready,
             "message": "Google saves is not configured on this server.",
         }
     result["setup_ready"] = True
+    result["hosted_oauth_ready"] = oauth_setup_ready
     return result
 
 
