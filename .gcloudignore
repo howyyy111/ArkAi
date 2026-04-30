@@ -1,5 +1,5 @@
-# Keep Cloud Build uploads small while allowing OAuth client config files
-# that are required by the deployed Google Docs / Calendar / Tasks flows.
+# Keep Cloud Build uploads small and avoid uploading local secrets.
+# Provide production credentials through deployment configuration or a secret manager.
 
 .git
 .DS_Store
@@ -18,6 +18,11 @@ node_modules/
 deploy/.deploy.env
 
 token.json
+credentials.json
+**/*token*.json
+**/*credentials*.json
+**/*.pem
+**/*.key
 user_google_tokens/
 ark_learning_agent/user_google_tokens/
 ark_learning_agent/learner_uploads/
@@ -33,6 +38,3 @@ ark_learning_agent/.adk/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
-!ark_learning_agent/credentials.json
-!auth_function/credentials.json
