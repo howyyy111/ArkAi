@@ -614,10 +614,9 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
         fields='id, parents'
     ).execute()
     
-    # 3. Insert content and apply readable document styling.
+    # 3. Format requests
     requests = []
-    cleaned_note_text = _clean_google_export_text(note_text)
-    full_text = (cleaned_note_text or "No note content was provided.") + "\n\n"
+    full_text = note_text + "\n\n"
     current_index = 1
     
     requests.append({
@@ -627,7 +626,6 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
         }
     })
     current_index += len(full_text)
-    requests.extend(_google_doc_formatting_requests(full_text))
     
     if code_snippet:
         try:

@@ -625,6 +625,24 @@ function saveHistoryItem(role, body) {
 }
 
 function buildClientChatMessages() {
+  const visibleMessages = Array.from(messages.querySelectorAll(".message"))
+    .map((messageNode) => {
+      const bodyNode = messageNode.querySelector(".message-body");
+      const content = String(bodyNode?.innerText || bodyNode?.textContent || "").trim();
+      if (!content) {
+        return null;
+      }
+      return {
+        role: messageNode.classList.contains("user") ? "user" : "assistant",
+        content,
+      };
+    })
+    .filter(Boolean);
+
+  if (visibleMessages.some((message) => message.role === "assistant")) {
+    return visibleMessages.slice(-30);
+  }
+
   return getHistory().slice(-30).map((message) => ({
     role: message.role === "agent" ? "assistant" : message.role,
     content: message.body || "",

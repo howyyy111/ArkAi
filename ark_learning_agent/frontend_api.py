@@ -383,13 +383,15 @@ def _google_save_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]
     cleaned: list[dict[str, str]] = []
     for message in messages:
         content = _clean_google_save_text(message.get("content", ""))
-        if not content or _is_google_save_request(content):
+        if not content:
             continue
         role = str(message.get("role", "")).strip().lower()
         if role in {"assistant", "agent", "model"}:
             role = "agent"
         elif role != "user":
             role = "message"
+        if role == "user" and _is_google_save_request(content):
+            continue
         author = "You" if role == "user" else "ArkAI"
         cleaned.append({"role": role, "author": author, "content": content})
     return cleaned
@@ -411,8 +413,16 @@ def _latest_google_save_exchange(cleaned_messages: list[dict[str, str]]) -> tupl
             break
 
     if answer_index < 0:
-        prompt = _latest_google_save_content(cleaned_messages, "user")
-        return prompt, "", cleaned_messages[:-1] if prompt else cleaned_messages
+        prompt_index = -1
+        for index in range(len(cleaned_messages) - 1, -1, -1):
+            if cleaned_messages[index].get("role") == "user":
+                prompt_index = index
+                break
+        prompt = cleaned_messages[prompt_index]["content"] if prompt_index >= 0 else ""
+        earlier_messages = [
+            message for index, message in enumerate(cleaned_messages) if prompt_index < 0 or index < prompt_index
+        ]
+        return prompt, "", earlier_messages
 
     prompt_index = -1
     for index in range(answer_index - 1, -1, -1):
@@ -425,12 +435,39 @@ def _latest_google_save_exchange(cleaned_messages: list[dict[str, str]]) -> tupl
     paired_indexes = {answer_index}
     if prompt_index >= 0:
         paired_indexes.add(prompt_index)
-    earlier_messages = [message for index, message in enumerate(cleaned_messages) if index not in paired_indexes]
+    earlier_messages = [
+        message for index, message in enumerate(cleaned_messages) if prompt_index < 0 or index < prompt_index
+    ]
     return prompt, answer, earlier_messages
 
 def _has_google_save_answer(messages: list[dict[str, Any]]) -> bool:
     _, answer, _ = _latest_google_save_exchange(_google_save_messages(messages))
     return bool(answer)
+
+def _strip_google_save_offer(text: str) -> str:
+    """Remove the Tutor's closing save-offer from content being written to Docs."""
+    lines = _clean_google_save_text(text).splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines:
+        tail = lines[-1].strip()
+        normalized_tail = re.sub(r"\s+", " ", tail).lower()
+        if not normalized_tail:
+            lines.pop()
+            continue
+        if (
+            "would you like" in normalized_tail
+            and "save" in normalized_tail
+            and ("google doc" in normalized_tail or "docs" in normalized_tail)
+        ):
+            lines.pop()
+            while lines and not lines[-1].strip():
+                lines.pop()
+            if lines and lines[-1].strip() in {"---", "___", "***"}:
+                lines.pop()
+            continue
+        break
+    return "\n".join(lines).strip()
 
 def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
     for message in messages:
@@ -443,27 +480,14 @@ def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
 
 def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
     cleaned_messages = _google_save_messages(messages)
-    lines = ["# ArkAI Tutor Notes", ""]
     if not cleaned_messages:
-        lines.append("No tutor content was available to save yet.")
-        return "\n".join(lines).strip()
+        return "No tutor content was available to save yet."
 
     prompt, answer, earlier_messages = _latest_google_save_exchange(cleaned_messages)
-
-    if prompt:
-        lines.extend(["## User Question", prompt, ""])
     if answer:
-        lines.extend(["## ArkAI Tutor Explanation", answer, ""])
-    else:
-        lines.extend(["## ArkAI Tutor Explanation", "No tutor response was found in this chat yet.", ""])
+        return _strip_google_save_offer(answer) or answer
 
-    if earlier_messages:
-        lines.extend(["### Earlier Conversation Context"])
-        for message in earlier_messages[-6:]:
-            lines.append(f"**{message['author']}**: {_truncate_google_save_text(message['content'], 700)}")
-        lines.append("")
-
-    return "\n".join(lines).strip()
+    return prompt or "No tutor response was found in this chat yet."
 
 def _format_chat_messages_for_google_drive(messages: list[dict[str, Any]]) -> str:
     cleaned_messages = _google_save_messages(messages)
@@ -529,7 +553,7 @@ async def _get_tutor_chat_save_payload(
         }
 
     messages = history.get("messages") or []
-    if client_messages and _has_google_save_answer(client_messages) and not _has_google_save_answer(messages):
+    if client_messages and _has_google_save_answer(client_messages):
         messages = client_messages
     return {
         "status": "success",
