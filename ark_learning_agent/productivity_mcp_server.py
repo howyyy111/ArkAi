@@ -234,9 +234,12 @@ def google_oauth_status(user_id: str) -> dict:
 
     has_credentials = False
     if db:
-        doc = _user_google_oauth_doc(normalized_user_id).get()
-        has_credentials = doc.exists
-    else:
+        doc_ref = _user_google_oauth_doc(normalized_user_id)
+        if doc_ref:
+            doc = doc_ref.get()
+            has_credentials = doc.exists
+    
+    if not has_credentials:
         has_credentials = _user_google_token_path(normalized_user_id).is_file()
 
     return {
@@ -410,7 +413,17 @@ def get_drive_folder_id(drive_service, folder_name="Adaptive Learning Assistant 
     return items[0].get('id')
 
 
-def _clean_google_export_text(value: str) -> str:
+def _connect_sqlite() -> sqlite3.Connection:
+    import sqlite3
+    conn = sqlite3.connect(SQLITE_DB_PATH, timeout=30, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    return conn
+
+
+def _clean_google_export_text(value: Any) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     text = re.sub(r"\n{3,}", "\n\n", text)
     return "\n".join(line.rstrip() for line in text.splitlines()).strip()
@@ -439,12 +452,19 @@ def _google_doc_line_ranges(text: str) -> list[dict]:
 
 def _google_doc_formatting_requests(text: str) -> list[dict]:
     requests = []
-    for position, line in enumerate(_google_doc_line_ranges(text)):
+    lines = _google_doc_line_ranges(text)
+    
+    for position, line in enumerate(lines):
         line_text = line["text"]
+        # Skip empty lines for paragraph styling but keep them for indices
+        if not line_text.strip() and line["end"] <= line["start"]:
+            continue
+
         paragraph_range = {"startIndex": line["start"], "endIndex": max(line["start"] + 1, line["paragraph_end"])}
         text_range = {"startIndex": line["start"], "endIndex": line["end"]}
 
-        if position == 0:
+        # 1. Paragraph-level formatting (Headings and Bullets)
+        if position == 0 and not line_text.startswith("#"):
             requests.append(
                 {
                     "updateParagraphStyle": {
@@ -454,9 +474,37 @@ def _google_doc_formatting_requests(text: str) -> list[dict]:
                     }
                 }
             )
-            continue
-
-        if line_text in {"Prompt", "Tutor response", "Earlier context", "Notes", "Focus", "Summary"}:
+        elif line_text.startswith("# "):
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": paragraph_range,
+                        "paragraphStyle": {"namedStyleType": "HEADING_1", "spaceAbove": {"magnitude": 14, "unit": "PT"}},
+                        "fields": "namedStyleType,spaceAbove",
+                    }
+                }
+            )
+        elif line_text.startswith("## "):
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": paragraph_range,
+                        "paragraphStyle": {"namedStyleType": "HEADING_2", "spaceAbove": {"magnitude": 12, "unit": "PT"}},
+                        "fields": "namedStyleType,spaceAbove",
+                    }
+                }
+            )
+        elif line_text.startswith("### "):
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": paragraph_range,
+                        "paragraphStyle": {"namedStyleType": "HEADING_3", "spaceAbove": {"magnitude": 10, "unit": "PT"}},
+                        "fields": "namedStyleType,spaceAbove",
+                    }
+                }
+            )
+        elif line_text in {"Prompt", "Tutor response", "Earlier context", "Notes", "Focus", "Summary"}:
             requests.append(
                 {
                     "updateParagraphStyle": {
@@ -466,9 +514,7 @@ def _google_doc_formatting_requests(text: str) -> list[dict]:
                     }
                 }
             )
-            continue
-
-        if line_text.startswith("- "):
+        elif line_text.startswith("- ") or line_text.startswith("* "):
             requests.append(
                 {
                     "createParagraphBullets": {
@@ -477,7 +523,8 @@ def _google_doc_formatting_requests(text: str) -> list[dict]:
                     }
                 }
             )
-
+        
+        # 2. Line-specific character formatting (Bold/Italic/Labels)
         if line_text.startswith("You:") or line_text.startswith("ArkAI:"):
             colon_index = line_text.find(":")
             requests.append(
@@ -490,6 +537,37 @@ def _google_doc_formatting_requests(text: str) -> list[dict]:
                 }
             )
 
+        # Handle Markdown Bold **text**
+        bold_matches = re.finditer(r"\*\*(.*?)\*\*", line_text)
+        for match in bold_matches:
+            start_off, end_off = match.span()
+            requests.append({
+                "updateTextStyle": {
+                    "range": {
+                        "startIndex": line["start"] + start_off,
+                        "endIndex": line["start"] + end_off
+                    },
+                    "textStyle": {"bold": True},
+                    "fields": "bold"
+                }
+            })
+
+        # Handle Markdown Italic *text* (avoiding double-counting bold)
+        italic_matches = re.finditer(r"(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)", line_text)
+        for match in italic_matches:
+            start_off, end_off = match.span()
+            requests.append({
+                "updateTextStyle": {
+                    "range": {
+                        "startIndex": line["start"] + start_off,
+                        "endIndex": line["start"] + end_off
+                    },
+                    "textStyle": {"italic": True},
+                    "fields": "italic"
+                }
+            })
+
+        # General paragraph spacing
         if line["end"] > line["start"]:
             requests.append(
                 {

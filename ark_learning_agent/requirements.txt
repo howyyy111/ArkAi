@@ -6,6 +6,10 @@ google-auth-httplib2
 google-auth-oauthlib
 Pygments
 firebase-admin
+google-cloud-firestore
+google-genai
+fastapi
+python-multipart
 requests
 Pillow
 uvicorn

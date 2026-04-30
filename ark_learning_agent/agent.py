@@ -109,9 +109,8 @@ TOOL_EXECUTION_RULES = """
           - `note_text` for the readable document content
           - `code_snippet` only if there is actual code that should be formatted
           - `language` only when `code_snippet` is provided
-        - Keep `note_text` as readable structured text.
-        - Prefer simple readable text over heavy markdown when saving to Google Docs.
-        - Avoid excessive markdown symbols such as many ###, ---, or dense nested bullets in saved content.
+        - Use standard Markdown (headings #, ##, ###, bold **text**, and bullets -) to structure the document.
+        - Avoid excessive complexity, but ensure the document is professional and well-structured.
         - Do not stuff the whole document into a fake function call.
 
         Code vs tool separation:

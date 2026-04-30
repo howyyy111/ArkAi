@@ -95,6 +95,7 @@ class ChatRequest(ApiRequest):
     selectedMaterialIds: Optional[List[str]] = None
     inputMode: Optional[str] = ""
     temporaryAttachments: Optional[List[Dict[str, Any]]] = None
+    clientMessages: Optional[List[Dict[str, Any]]] = None
 
 class GoogleConnectRequest(ApiRequest):
     forceReconnect: Optional[bool] = False

@@ -624,6 +624,13 @@ function saveHistoryItem(role, body) {
   window.localStorage.setItem(`${historyStorageKeyPrefix}${uid}-${sid}`, JSON.stringify(hist));
 }
 
+function buildClientChatMessages() {
+  return getHistory().slice(-30).map((message) => ({
+    role: message.role === "agent" ? "assistant" : message.role,
+    content: message.body || "",
+  })).filter((message) => message.content.trim());
+}
+
 function buildEmptyStateMarkup() {
   return `
     <div class="empty-state">
@@ -4672,6 +4679,7 @@ chatForm.addEventListener("submit", async (event) => {
     selectedMaterialIds: [...selectedMaterialIds],
     inputMode: pendingInputMode,
     temporaryAttachments,
+    clientMessages: buildClientChatMessages(),
   };
   pendingInputMode = "text";
   clearTutorAttachments();

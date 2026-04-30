@@ -30,12 +30,16 @@ def _expiry_iso(days: int) -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    init_web_session_sqlite()
-    return sqlite3.connect(SQLITE_DB_PATH, timeout=30)
+    conn = sqlite3.connect(SQLITE_DB_PATH, timeout=30, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    return conn
 
 
 def init_web_session_sqlite() -> None:
-    conn = sqlite3.connect(SQLITE_DB_PATH, timeout=30)
+    conn = _connect()
     cur = conn.cursor()
 
     cur.execute(
@@ -248,6 +252,7 @@ def _sqlite_browser_identity(
     normalized_user_id = authenticated_user_id.strip()
     now = _utc_now()
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
 
@@ -410,6 +415,7 @@ def _sqlite_chat_session(
     normalized_session_id = (session_id or "").strip()
     now = _utc_now()
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
 
@@ -519,6 +525,7 @@ def append_chat_message(
         )
         return
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -613,6 +620,7 @@ def _sqlite_chat_sessions(user_id: str, limit: int = 20) -> dict[str, Any]:
     if not normalized_user_id:
         return {"status": "error", "message": "Missing user id."}
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -696,6 +704,7 @@ def _sqlite_chat_messages(user_id: str, session_id: str) -> dict[str, Any]:
     if not normalized_user_id or not normalized_session_id:
         return {"status": "error", "message": "Missing chat session id."}
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -761,6 +770,7 @@ def _sqlite_delete_chat_session(user_id: str, session_id: str) -> dict[str, Any]
     if not normalized_user_id or not normalized_session_id:
         return {"status": "error", "message": "Missing chat session id."}
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -808,6 +818,7 @@ def _sqlite_delete_all_chat_sessions(user_id: str) -> dict[str, Any]:
     if not normalized_user_id:
         return {"status": "error", "message": "Missing user id."}
 
+    init_web_session_sqlite()
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM chat_messages WHERE user_id = ?", (normalized_user_id,))

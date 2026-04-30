@@ -6,5 +6,8 @@ google-auth-httplib2
 google-auth-oauthlib
 Pygments
 firebase-admin
+google-genai
 requests
 Pillow
+uvicorn
+fastapi

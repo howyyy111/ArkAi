@@ -63,8 +63,17 @@ def _get_genai_client():
     return None
 
 
+def _connect_sqlite() -> sqlite3.Connection:
+    conn = sqlite3.connect(SQLITE_DB_PATH, timeout=30, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    return conn
+
+
 def init_materials_sqlite():
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -219,7 +228,7 @@ def save_learning_material(
         _material_collection(db, user_id).document(material_id).set(record)
         storage = "firestore+gcs" if remote_url else "firestore+localfile"
     else:
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -285,7 +294,7 @@ def list_learning_materials(user_id: str) -> dict[str, Any]:
         return {"status": "success", "materials": materials}
 
     init_materials_sqlite()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -327,7 +336,7 @@ def delete_learning_material(user_id: str, material_id: str) -> dict[str, Any]:
             _material_collection(db, user_id).document(normalized_id).delete()
     else:
         init_materials_sqlite()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -375,7 +384,7 @@ def delete_all_learning_materials(user_id: str) -> dict[str, Any]:
                 _material_collection(db, user_id).document(material_id).delete()
     else:
         init_materials_sqlite()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -418,7 +427,7 @@ def _get_material_records(user_id: str, material_ids: list[str] | None = None) -
         return records
 
     init_materials_sqlite()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """

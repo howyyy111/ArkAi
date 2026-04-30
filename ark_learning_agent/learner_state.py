@@ -64,10 +64,14 @@ def get_firestore_client():
             or os.environ.get("GCLOUD_PROJECT")
             or ""
         ).strip()
-        if project_id:
-            app = firebase_admin.initialize_app(options={"projectId": project_id})
-        else:
-            app = firebase_admin.initialize_app()
+        try:
+            if project_id:
+                app = firebase_admin.initialize_app(options={"projectId": project_id})
+            else:
+                app = firebase_admin.initialize_app()
+        except Exception:
+            # Fallback to in-memory/sqlite if firebase cannot start
+            return None
 
     try:
         database_id = (os.environ.get("FIRESTORE_DATABASE") or "").strip()
@@ -80,8 +84,13 @@ def get_firestore_client():
             db = google_cloud_firestore.Client(project=project_id or None, database=database_id)
         else:
             db = firestore.client(app=app)
+        
+        # Only check connectivity if not on Cloud Run to avoid startup delays
         if not _running_on_cloud_run():
-            db.collection("_healthcheck").document("ping").get()
+            try:
+                db.collection("_healthcheck").document("ping").get(timeout=5)
+            except Exception:
+                return None
         return db
     except Exception:
         return None
@@ -102,8 +111,18 @@ def _get_genai_client():
     return None
 
 
+def _connect_sqlite() -> sqlite3.Connection:
+    conn = sqlite3.connect(SQLITE_DB_PATH, timeout=30, check_same_thread=False)
+    # Enable WAL mode for better concurrency
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    return conn
+
+
 def init_sqlite_fallback():
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
 
     cur.execute(
@@ -509,7 +528,7 @@ def _load_mastery(user_id: str) -> dict[str, Any]:
         return {"topics": {}, "overall_score": 0.0}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         "SELECT mastery_json FROM learner_mastery WHERE user_id = ?",
@@ -537,7 +556,7 @@ def _save_mastery(user_id: str, mastery: dict[str, Any]) -> None:
         return
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -656,7 +675,7 @@ def save_learner_profile(
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -696,7 +715,7 @@ def get_learner_profile(user_id: str) -> dict[str, Any]:
         return {"status": "success", "user_id": user_id, **profile}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -750,7 +769,7 @@ def save_learning_progress(
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -786,7 +805,7 @@ def get_learning_history(user_id: str, limit: int = 10) -> dict[str, Any]:
         return {"status": "success", "history": records}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -834,7 +853,7 @@ def delete_learning_history_item(user_id: str, record_id: str) -> dict[str, Any]
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -870,7 +889,7 @@ def delete_all_learning_history(user_id: str) -> dict[str, Any]:
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -910,7 +929,7 @@ def save_study_note(user_id: str, topic: str, note: str) -> dict[str, Any]:
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -944,7 +963,7 @@ def list_study_notes(user_id: str, limit: int = 10) -> dict[str, Any]:
         return {"status": "success", "notes": notes}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -1021,7 +1040,7 @@ def create_assessment(
         _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -1142,7 +1161,7 @@ def create_custom_assessment(
         _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -1252,7 +1271,7 @@ def _get_assessment_record(user_id: str, assessment_id: str) -> dict[str, Any] |
         return None
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -1394,7 +1413,7 @@ def submit_assessment(
         _touch_user_doc(db, user_id)
     else:
         init_sqlite_fallback()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -1456,7 +1475,7 @@ def _load_roadmap(user_id: str) -> dict[str, Any] | None:
         return None
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute("SELECT roadmap_json FROM learner_roadmaps WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
@@ -1491,7 +1510,7 @@ def _save_roadmap(user_id: str, roadmap: dict[str, Any]) -> None:
         return
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         """
@@ -1539,7 +1558,7 @@ def list_roadmaps(user_id: str) -> dict[str, Any]:
                 roadmaps.append(roadmap)
     else:
         init_sqlite_fallback()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -1604,7 +1623,7 @@ def delete_saved_roadmap(user_id: str, roadmap_id: str) -> dict[str, Any]:
         return {"status": "success", "message": "Saved roadmap removed."}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute(
         "DELETE FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id = ?",
@@ -1646,7 +1665,7 @@ def delete_all_saved_roadmaps(user_id: str) -> dict[str, Any]:
         }
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     if current_id:
         cur.execute(
@@ -1696,7 +1715,7 @@ def update_saved_roadmap_session(
         roadmap = payload.get("roadmap") or {}
     else:
         init_sqlite_fallback()
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             "SELECT roadmap_json FROM learner_roadmap_history WHERE user_id = ? AND roadmap_id = ?",
@@ -1741,7 +1760,7 @@ def update_saved_roadmap_session(
         )
         _touch_user_doc(db, user_id)
     else:
-        conn = sqlite3.connect(SQLITE_DB_PATH)
+        conn = _connect_sqlite()
         cur = conn.cursor()
         cur.execute(
             """
@@ -1777,7 +1796,7 @@ def delete_roadmap(user_id: str) -> dict[str, Any]:
         return {"status": "success", "message": "Roadmap deleted."}
 
     init_sqlite_fallback()
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect_sqlite()
     cur = conn.cursor()
     cur.execute("SELECT roadmap_json FROM learner_roadmaps WHERE user_id = ?", (user_id,))
     row = cur.fetchone()

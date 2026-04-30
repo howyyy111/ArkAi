@@ -386,16 +386,51 @@ def _google_save_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]
         if not content or _is_google_save_request(content):
             continue
         role = str(message.get("role", "")).strip().lower()
+        if role in {"assistant", "agent", "model"}:
+            role = "agent"
+        elif role != "user":
+            role = "message"
         author = "You" if role == "user" else "ArkAI"
         cleaned.append({"role": role, "author": author, "content": content})
     return cleaned
 
 def _latest_google_save_content(cleaned_messages: list[dict[str, str]], role: str) -> str:
     role = role.lower()
+    if role in {"assistant", "model"}:
+        role = "agent"
     for message in reversed(cleaned_messages):
         if message.get("role") == role:
             return message.get("content", "")
     return ""
+
+def _latest_google_save_exchange(cleaned_messages: list[dict[str, str]]) -> tuple[str, str, list[dict[str, str]]]:
+    answer_index = -1
+    for index in range(len(cleaned_messages) - 1, -1, -1):
+        if cleaned_messages[index].get("role") == "agent":
+            answer_index = index
+            break
+
+    if answer_index < 0:
+        prompt = _latest_google_save_content(cleaned_messages, "user")
+        return prompt, "", cleaned_messages[:-1] if prompt else cleaned_messages
+
+    prompt_index = -1
+    for index in range(answer_index - 1, -1, -1):
+        if cleaned_messages[index].get("role") == "user":
+            prompt_index = index
+            break
+
+    prompt = cleaned_messages[prompt_index]["content"] if prompt_index >= 0 else ""
+    answer = cleaned_messages[answer_index]["content"]
+    paired_indexes = {answer_index}
+    if prompt_index >= 0:
+        paired_indexes.add(prompt_index)
+    earlier_messages = [message for index, message in enumerate(cleaned_messages) if index not in paired_indexes]
+    return prompt, answer, earlier_messages
+
+def _has_google_save_answer(messages: list[dict[str, Any]]) -> bool:
+    _, answer, _ = _latest_google_save_exchange(_google_save_messages(messages))
+    return bool(answer)
 
 def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
     for message in messages:
@@ -408,27 +443,24 @@ def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
 
 def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
     cleaned_messages = _google_save_messages(messages)
-    lines = ["ArkAI Tutor Notes", ""]
+    lines = ["# ArkAI Tutor Notes", ""]
     if not cleaned_messages:
         lines.append("No tutor content was available to save yet.")
         return "\n".join(lines).strip()
 
-    prompt = _latest_google_save_content(cleaned_messages, "user")
-    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
-        cleaned_messages,
-        "agent",
-    )
+    prompt, answer, earlier_messages = _latest_google_save_exchange(cleaned_messages)
 
     if prompt:
-        lines.extend(["Prompt", prompt, ""])
+        lines.extend(["## User Question", prompt, ""])
     if answer:
-        lines.extend(["Tutor response", answer, ""])
+        lines.extend(["## ArkAI Tutor Explanation", answer, ""])
+    else:
+        lines.extend(["## ArkAI Tutor Explanation", "No tutor response was found in this chat yet.", ""])
 
-    earlier_messages = cleaned_messages[:-2] if len(cleaned_messages) > 2 else []
     if earlier_messages:
-        lines.extend(["Earlier context"])
+        lines.extend(["### Earlier Conversation Context"])
         for message in earlier_messages[-6:]:
-            lines.append(f"{message['author']}: {_truncate_google_save_text(message['content'], 700)}")
+            lines.append(f"**{message['author']}**: {_truncate_google_save_text(message['content'], 700)}")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -440,18 +472,14 @@ def _format_chat_messages_for_google_drive(messages: list[dict[str, Any]]) -> st
         lines.append("No tutor content was available to save yet.")
         return "\n".join(lines).strip()
 
-    prompt = _latest_google_save_content(cleaned_messages, "user")
-    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
-        cleaned_messages,
-        "agent",
-    )
+    prompt, answer, earlier_messages = _latest_google_save_exchange(cleaned_messages)
     if prompt:
         lines.extend(["## Prompt", prompt, ""])
     if answer:
         lines.extend(["## Tutor response", answer, ""])
-    if len(cleaned_messages) > 2:
+    if earlier_messages:
         lines.extend(["## Earlier context"])
-        for message in cleaned_messages[:-2][-6:]:
+        for message in earlier_messages[-6:]:
             lines.append(f"- **{message['author']}**: {_truncate_google_save_text(message['content'], 500)}")
     return "\n".join(lines).strip()
 
@@ -459,11 +487,7 @@ def _format_chat_messages_for_google_task(messages: list[dict[str, Any]]) -> str
     cleaned_messages = _google_save_messages(messages)
     if not cleaned_messages:
         return "Created from ArkAI Tutor."
-    prompt = _latest_google_save_content(cleaned_messages, "user")
-    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
-        cleaned_messages,
-        "agent",
-    )
+    prompt, answer, _ = _latest_google_save_exchange(cleaned_messages)
     parts = ["Created from ArkAI Tutor."]
     if prompt:
         parts.extend(["", "Prompt:", _truncate_google_save_text(prompt, 600)])
@@ -475,11 +499,7 @@ def _format_chat_messages_for_google_calendar(messages: list[dict[str, Any]]) ->
     cleaned_messages = _google_save_messages(messages)
     if not cleaned_messages:
         return "Created from ArkAI Tutor."
-    prompt = _latest_google_save_content(cleaned_messages, "user")
-    answer = _latest_google_save_content(cleaned_messages, "assistant") or _latest_google_save_content(
-        cleaned_messages,
-        "agent",
-    )
+    prompt, answer, _ = _latest_google_save_exchange(cleaned_messages)
     parts = ["ArkAI Tutor study session."]
     if prompt:
         parts.extend(["", "Focus:", _truncate_google_save_text(prompt, 350)])
@@ -487,7 +507,11 @@ def _format_chat_messages_for_google_calendar(messages: list[dict[str, Any]]) ->
         parts.extend(["", "Notes:", _truncate_google_save_text(answer, 1200)])
     return "\n".join(parts).strip()
 
-async def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[str, Any]:
+async def _get_tutor_chat_save_payload(
+    user_id: str,
+    session_id: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import google_oauth_status
 
     oauth_status = await asyncio.to_thread(google_oauth_status, user_id)
@@ -505,6 +529,8 @@ async def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[st
         }
 
     messages = history.get("messages") or []
+    if client_messages and _has_google_save_answer(client_messages) and not _has_google_save_answer(messages):
+        messages = client_messages
     return {
         "status": "success",
         "messages": messages,
@@ -516,10 +542,14 @@ async def _get_tutor_chat_save_payload(user_id: str, session_id: str) -> dict[st
     }
 
 
-async def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[str, Any]:
+async def _save_tutor_chat_to_google_doc(
+    user_id: str,
+    session_id: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import save_google_doc_note
 
-    payload = await _get_tutor_chat_save_payload(user_id, session_id)
+    payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
     if payload.get("status") != "success":
         return payload
     return await asyncio.to_thread(save_google_doc_note,
@@ -529,10 +559,14 @@ async def _save_tutor_chat_to_google_doc(user_id: str, session_id: str) -> dict[
     )
 
 
-async def _save_tutor_chat_to_google_drive(user_id: str, session_id: str) -> dict[str, Any]:
+async def _save_tutor_chat_to_google_drive(
+    user_id: str,
+    session_id: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import save_text_file_to_drive
 
-    payload = await _get_tutor_chat_save_payload(user_id, session_id)
+    payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
     if payload.get("status") != "success":
         return payload
     return await asyncio.to_thread(save_text_file_to_drive,
@@ -542,10 +576,14 @@ async def _save_tutor_chat_to_google_drive(user_id: str, session_id: str) -> dic
     )
 
 
-async def _save_tutor_chat_to_google_task(user_id: str, session_id: str) -> dict[str, Any]:
+async def _save_tutor_chat_to_google_task(
+    user_id: str,
+    session_id: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import create_study_task
 
-    payload = await _get_tutor_chat_save_payload(user_id, session_id)
+    payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
     if payload.get("status") != "success":
         return payload
     return await asyncio.to_thread(create_study_task,
@@ -638,10 +676,16 @@ def _is_roadmap_calendar_request(message: str) -> bool:
         for phrase in ("roadmap", "study session", "study sessions", "sessions", "session plan")
     )
 
-async def _save_tutor_chat_to_google_calendar(user_id: str, session_id: str, message: str, timezone_name: str) -> dict[str, Any]:
+async def _save_tutor_chat_to_google_calendar(
+    user_id: str,
+    session_id: str,
+    message: str,
+    timezone_name: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import create_calendar_event
 
-    payload = await _get_tutor_chat_save_payload(user_id, session_id)
+    payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
     if payload.get("status") != "success":
         return payload
     window = _calendar_window_from_message(message, timezone_name)
@@ -1724,11 +1768,20 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
             },
         )
         if _is_google_save_request(message):
+            client_messages = payload.clientMessages or []
             try:
                 if _is_google_drive_save_request(message):
-                    save_result = await _save_tutor_chat_to_google_drive(user_id=user_id, session_id=session_id)
+                    save_result = await _save_tutor_chat_to_google_drive(
+                        user_id=user_id,
+                        session_id=session_id,
+                        client_messages=client_messages,
+                    )
                 elif _is_google_task_save_request(message):
-                    save_result = await _save_tutor_chat_to_google_task(user_id=user_id, session_id=session_id)
+                    save_result = await _save_tutor_chat_to_google_task(
+                        user_id=user_id,
+                        session_id=session_id,
+                        client_messages=client_messages,
+                    )
                 elif _is_google_calendar_save_request(message):
                     if _is_roadmap_calendar_request(message):
                         save_result = await _save_roadmap_sessions_to_google_calendar(
@@ -1742,9 +1795,14 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
                             session_id=session_id,
                             message=message,
                             timezone_name=user_timezone,
+                            client_messages=client_messages,
                         )
                 else:
-                    save_result = await _save_tutor_chat_to_google_doc(user_id=user_id, session_id=session_id)
+                    save_result = await _save_tutor_chat_to_google_doc(
+                        user_id=user_id,
+                        session_id=session_id,
+                        client_messages=client_messages,
+                    )
             except Exception as exc:
                 LOGGER.exception("Tutor Google save failed for user %s", user_id)
                 save_result = {
