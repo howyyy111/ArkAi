@@ -1,57 +1,447 @@
 # ARKAIS
 
-ARKAIS is an intelligent, AI-driven learning and teaching assistant built leveraging the Google Agent Development Kit (ADK) and the Model Context Protocol (MCP). It acts as a personal tutor that adapts to your learning style, creates structured study roadmaps, and seamlessly integrates with your Google Workspace to organize your educational journey.
+ARKAIS is an adaptive AI learning assistant that helps a learner move from "I need to understand this" to "I have a plan, practice, evidence of progress, and saved study work."
 
-## 🌟 Features
+The application combines a browser-based learning dashboard, a FastAPI backend, Google ADK multi-agent tutoring, a materials library, learner progress persistence, diagnostics, roadmap planning, and Google Workspace actions through MCP tools.
 
-*   **Teaching Agent:** Delivers short, practical, and highly focused lessons tailored to your available time and learning preferences. It explains concepts, provides examples, sets up short coding tasks or quizzes, and tracks your progress.
-*   **Roadmap Agent:** Acts as a study planner that breaks down larger goals into structured weekly phases and tangible outcomes.
-*   **Google Workspace Integration (MCP):** Connects with your Google account to enhance productivity:
-    *   **Google Docs:** Automatically saves thorough summaries and code examples directly to your Drive.
-    *   **Google Calendar:** Schedules follow-up lessons, checks your timezone, and adds learning sessions to your calendar.
-    *   **Google Tasks:** Adds homework and study tasks.
-*   **Persistent Progress Tracking:** Stores learner profiles, learning patterns, learner state, notes, and historical progress in Firebase Firestore, with SQLite fallback for local-only development.
-*   **Firebase Auth Ready Frontend:** Supports Google Sign-In on the web UI, issues secure server-side session cookies, and uses the same learner identity across chat, persistence, and Google Workspace actions.
-*   **Diagnostics And Mastery Engine:** Generates short diagnostics, scores quiz attempts, tracks concept weaknesses, and updates topic mastery over time.
-*   **Living Roadmaps:** Generates milestone-based study plans with checkpoints, tracks session completion, and automatically switches into recovery mode when the learner falls behind.
-*   **Grounded Materials Library:** Supports uploading notes, code/text files, and study images for grounded tutoring with source-aware answers.
-*   **Voice And Multimodal Tutoring:** Adds browser voice input/output for hands-free tutoring and image-aware study help when Gemini multimodal support is available.
-*   **Evaluation And Intervention Agents:** Adds dedicated progress-review, recovery-planning, and reporting flows on top of the tutor and roadmap agents.
-*   **Google Workflow Actions:** Can save weekly reports to Google Docs and create Google Tasks directly from the learner's active roadmap.
-*   **Dashboard UX:** Surfaces mastery, roadmap momentum, grounded materials, intervention risk, and weekly insights in a single learner cockpit.
-*   **Architecture Readiness View:** Exposes Firebase/Auth/Vertex/OAuth/runtime readiness and lightweight in-app metrics for demo and deployment confidence.
-*   **Judge Demo Kit:** Includes demo personas, measurable learner metrics, a polished end-to-end demo script, and a concise pitch inside the product UI.
+For hackathon judges and testers, start here:
 
-## 🏗️ Architecture
+**[Hackathon Tester Guide](./HACKATHON_TESTER_GUIDE.md)**
 
-The project is split into two main components:
+That guide explains how to run the app and how to use the included demo files:
 
-1.  **`ark_learning_agent/`**: Contains the core logic for the ADK Agents (`teaching_agent` and `roadmap_agent`) and the FastMCP server (`productivity_mcp_server.py`). The MCP server securely manages tools that interact with Google APIs and local/remote databases.
-2.  **`auth_function/`**: A Google Cloud HTTP Function that handles the OAuth 2.0 callback flow. This service securely receives Google authorization codes, exchanges them for tokens, and securely stores the credentials in Firebase Firestore for the agents to use on behalf of the user.
+- [`mock_ml_notes.md`](./mock_ml_notes.md)
+- [`mock_ml_exam.md`](./mock_ml_exam.md)
 
-## 🚀 Setup & Installation
+## What ARKAIS Does
+
+ARKAIS is designed for students who need a personal tutor that can:
+
+- explain a topic in a focused way
+- generate quizzes and diagnostics
+- build a study roadmap
+- track progress and mastery
+- use uploaded notes as study material
+- create mock tests from those notes
+- generate progress insights and weekly reports
+- save learning outputs into Google Docs, Google Tasks, Google Calendar, or Google Drive
+
+The goal is not only to answer questions, but to support a full learning workflow.
+
+## Core Features
+
+### Adaptive Tutor
+
+The Tutor view lets a learner ask a focused question, continue a study session, attach temporary files, use voice input, and receive explanations, examples, practice tasks, or quizzes.
+
+The tutor is backed by a Google ADK multi-agent setup. The root coordinator routes requests to specialized agents such as:
+
+- Teaching Agent
+- Roadmap Agent
+- Evaluator Agent
+- Intervention Agent
+- Report Agent
+
+### Study Roadmaps
+
+The Plan view helps a learner create a structured roadmap from:
+
+- topic
+- learning goal
+- current level
+- study time
+- deadline
+- start date
+- optional Google Calendar sync
+
+Roadmaps are broken into phases and sessions. Sessions can be marked as complete or pending, and ARKAIS can recommend recovery behavior when the learner falls behind.
+
+### Diagnostics And Mastery
+
+ARKAIS can generate short diagnostic assessments, score answers, and update learner mastery. This gives the product a measurable learning loop:
+
+1. Ask or study a topic.
+2. Take a diagnostic.
+3. Receive a score and feedback.
+4. Update mastery signals.
+5. Generate better next steps.
+
+### Materials Library
+
+The Materials view lets a learner upload notes, files, pasted text, and supported study assets. ARKAIS extracts usable text where possible and stores material metadata.
+
+Current supported local upload types include:
+
+- `.txt`
+- `.md`
+- `.csv`
+- `.json`
+- `.html`
+- `.css`
+- `.js`
+- `.py`
+- `.png`
+- `.jpg`
+- `.jpeg`
+- `.webp`
+- `.pdf` in selected mock-test flows
+
+The included demo material files are intended for judge testing:
+
+- `mock_ml_notes.md`: short machine learning notes
+- `mock_ml_exam.md`: sample exam style and structure
+
+### Mock Test Generation
+
+The Materials view includes a mock-test workflow. A tester can upload the notes file, optionally provide the exam file as a style reference, then ask ARKAIS to create a mock test.
+
+This is one of the clearest hackathon demo paths because it shows:
+
+- grounded learning from uploaded material
+- exam-style generation
+- user-controlled structure
+- downloadable study output
+
+### Insights And Reports
+
+The Insights view summarizes:
+
+- mastery progress
+- diagnostic coverage
+- roadmap status
+- material usage
+- intervention risk
+- next recommended learning step
+
+It can also generate a weekly learning report and save it to Google Docs when Google saves is connected.
+
+### Google Workspace Integration
+
+ARKAIS uses MCP tools to connect learning actions to Google Workspace:
+
+- Google Docs: save lessons, notes, reports, and assessments
+- Google Tasks: create roadmap tasks or study tasks
+- Google Calendar: schedule learning sessions
+- Google Drive: save text exports
+
+OAuth credentials are stored server-side, under each user record, so the app can perform Google actions only after the user connects Google saves.
+
+### Authentication And Persistence
+
+The frontend supports:
+
+- Firebase Google Sign-In when configured
+- server-side Firebase session cookies
+- guest sessions for local demos
+- email fallback for local development when Firebase web auth is not configured
+
+Learner data is stored in Firestore when available, with SQLite fallback for local development.
+
+## Current User Interface
+
+The app is organized into four main views.
+
+### Tutor
+
+Main learning chat.
+
+Key UI areas:
+
+- chat messages
+- starter prompts
+- file attachment button
+- voice status
+- new session
+- saved history
+- learning focus panel
+- mastery progress panel
+
+Typical tester actions:
+
+- "Teach me machine learning overfitting simply."
+- "Quiz me on supervised vs unsupervised learning."
+- "Continue my roadmap session."
+
+### Plan
+
+Diagnostics and roadmap generation.
+
+Key UI areas:
+
+- current roadmap summary
+- diagnostic form
+- roadmap builder
+- calendar sync controls
+- generated roadmap workspace
+- previous roadmaps panel
+- session status updates
+- save roadmap tasks to Google Tasks
+- save session reminders to Google Calendar
+
+Typical tester actions:
+
+- create a diagnostic for "machine learning"
+- generate a 14-day beginner roadmap
+- mark a roadmap session as complete
+- open the roadmap workspace
+
+### Materials
+
+Study material uploads and mock-test creation.
+
+Key UI areas:
+
+- upload card
+- file drop zone
+- materials library
+- selected material summary
+- mock-test settings
+- structure field
+- sample exam style upload
+- create mock test
+- download mock test
+
+Typical tester actions:
+
+- upload `mock_ml_notes.md`
+- upload or reference `mock_ml_exam.md` as sample exam style
+- generate a mock test on introduction to machine learning
+
+### Insights
+
+Progress, risk, and reporting.
+
+Key UI areas:
+
+- learning signal panel
+- refresh insights
+- weekly report button
+- evaluation snapshot
+- next focus recommendations
+- report workspace
+- save report to Google Docs
+
+Typical tester actions:
+
+- refresh insights after a diagnostic or roadmap action
+- generate a weekly report
+- save the report to Google Docs if Google saves is connected
+
+## Recommended Hackathon Testing Path
+
+For judges, the fastest complete product walkthrough is:
+
+1. Start the frontend.
+2. Continue as guest or sign in with Google.
+3. Ask the Tutor to explain a machine learning topic.
+4. Open Plan and generate a diagnostic.
+5. Generate a roadmap for "Introduction to Machine Learning."
+6. Open Materials.
+7. Upload `mock_ml_notes.md`.
+8. Use `mock_ml_exam.md` as a sample exam style reference.
+9. Generate a mock test.
+10. Open Insights and refresh the learner snapshot.
+11. Generate a weekly report.
+12. Optional: connect Google saves and export the report or roadmap.
+
+Full judge instructions are in [`HACKATHON_TESTER_GUIDE.md`](./HACKATHON_TESTER_GUIDE.md).
+
+## Architecture Overview
+
+```text
+Learner Browser
+    |
+    v
+Frontend UI: frontend/index.html, frontend/script.js, frontend/styles.css
+    |
+    v
+FastAPI App: ark_learning_agent/main.py
+    |
+    v
+Frontend API Router: ark_learning_agent/frontend_api.py
+    |
+    +--> Google ADK Runner + Root Agent: ark_learning_agent/agent.py
+    |       |
+    |       +--> Teaching Agent
+    |       +--> Roadmap Agent
+    |       +--> Evaluator Agent
+    |       +--> Intervention Agent
+    |       +--> Report Agent
+    |
+    +--> Learner State: ark_learning_agent/learner_state.py
+    |
+    +--> Materials: ark_learning_agent/materials.py
+    |
+    +--> Web Sessions: ark_learning_agent/web_session_store.py
+    |
+    +--> MCP Productivity Server: ark_learning_agent/productivity_mcp_server.py
+            |
+            +--> Google Docs
+            +--> Google Calendar
+            +--> Google Tasks
+            +--> Google Drive
+
+Persistence:
+    Firestore in configured cloud environments
+    SQLite fallback for local development
+
+Auth:
+    Firebase Auth for app identity
+    Google OAuth callback for Workspace tool access
+```
+
+## Repository Structure
+
+```text
+.
+├── ark_learning_agent/
+│   ├── agent.py                    # Google ADK multi-agent definitions
+│   ├── main.py                     # FastAPI app creation and ADK app mounting
+│   ├── frontend_api.py             # Browser-facing API routes
+│   ├── learner_state.py            # profiles, diagnostics, mastery, roadmaps, reports
+│   ├── materials.py                # uploads, material context, mock-test generation
+│   ├── web_session_store.py        # guest identity, chat sessions, chat messages
+│   ├── productivity_mcp_server.py  # Google Docs, Tasks, Calendar, Drive MCP tools
+│   ├── tools.py                    # ADK tool wrappers
+│   └── demo_assets.py              # in-app demo/pitch data
+├── auth_function/
+│   └── main.py                     # Google OAuth callback handler
+├── frontend/
+│   ├── index.html                  # app markup
+│   ├── script.js                   # frontend state and API calls
+│   └── styles.css                  # UI styling
+├── scripts/
+│   ├── cleanup_expired_data.py     # retention cleanup
+│   └── deploy_gcp.sh              # GCP deployment helper
+├── tests/
+│   └── test_frontend_server.py
+├── mock_ml_notes.md                # judge/tester demo notes
+├── mock_ml_exam.md                 # judge/tester exam-style reference
+├── frontend_server.py              # local frontend server entrypoint
+├── firestore.rules
+├── firebase.json
+├── Dockerfile
+└── requirements.txt
+```
+
+## Important API Routes
+
+The frontend communicates with FastAPI routes under `/api`.
+
+### Session And Auth
+
+- `GET /api/config`
+- `GET /api/session`
+- `POST /api/session`
+- `POST /api/auth/session`
+- `POST /api/auth/logout`
+
+### Tutor Chat
+
+- `POST /api/chat`
+- `GET /api/chat/sessions`
+- `GET /api/chat/messages`
+- `POST /api/chat/delete`
+- `POST /api/chat/delete-all`
+
+### Diagnostics And Mastery
+
+- `POST /api/diagnostic/start`
+- `POST /api/diagnostic/submit`
+- `GET /api/mastery`
+- `GET /api/learner-state`
+
+### Roadmaps
+
+- `POST /api/roadmap/generate`
+- `GET /api/roadmap`
+- `GET /api/roadmaps`
+- `POST /api/roadmap/session/update`
+- `POST /api/roadmap/save-google-tasks`
+- `POST /api/roadmap/session/save-calendar`
+- `POST /api/roadmap/delete`
+
+### Materials
+
+- `GET /api/materials`
+- `POST /api/materials/upload`
+- `POST /api/materials/tutor`
+- `POST /api/materials/mock-test`
+- `POST /api/materials/delete`
+- `POST /api/materials/delete-all`
+
+### Insights And Reports
+
+- `GET /api/intervention`
+- `GET /api/evaluation`
+- `POST /api/report/generate`
+- `POST /api/report/save-google-doc`
+- `POST /api/assessment/save-google-doc`
+
+### Google Saves
+
+- `GET /api/google/status`
+- `POST /api/google/connect`
+- `POST /api/google/connect-token`
+
+## Local Setup
 
 ### Prerequisites
-*   Python 3.10+
-*   A Google Cloud Project with the following APIs enabled:
-    *   Google Calendar API
-    *   Google Tasks API
-    *   Google Docs API
-    *   Google Drive API
-*   Firebase initialized in your GCP project (Firestore database).
 
-### 1. Configure the Agent Environment
+- Python 3.10 or newer
+- pip
+- optional: Google Cloud project
+- optional: Firebase project
+- optional: Google OAuth credentials for Docs, Drive, Calendar, and Tasks
 
-Navigate to the `ark_learning_agent` directory and configure the environment:
+For a local hackathon demo, Firebase and Google OAuth are optional. Without Firebase web config, ARKAIS falls back to guest sessions. Without Google OAuth, the learning features still work, but Google Workspace exports will not.
+
+### 1. Create And Activate A Virtual Environment
+
+From the repository root:
 
 ```bash
-cd ark_learning_agent
 python -m venv .venv
+```
+
+On Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+On macOS or Linux:
+
+```bash
 source .venv/bin/activate
+```
+
+### 2. Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-Create or update the `.env` file in this directory based on your Google Cloud environment:
+If you run the ADK service directly from inside `ark_learning_agent`, install the agent requirements too:
+
+```bash
+pip install -r ark_learning_agent/requirements.txt
+```
+
+### 3. Configure Environment Variables
+
+Create a `.env` file in the repo root or inside `ark_learning_agent/`.
+
+Minimal local demo example:
+
+```env
+ARKAIS_FORCE_SQLITE=1
+ARKAIS_ALLOW_EMAIL_FALLBACK_AUTH=1
+GOOGLE_GENAI_USE_VERTEXAI=0
+GEMINI_API_KEY=your-gemini-api-key
+```
+
+Google Cloud / Vertex AI example:
 
 ```env
 GOOGLE_GENAI_USE_VERTEXAI=1
@@ -61,49 +451,119 @@ FIREBASE_PROJECT_ID=your-firebase-project-id
 FIREBASE_API_KEY=your-firebase-web-api-key
 FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
 FIREBASE_APP_ID=your-firebase-web-app-id
-# Optional:
-# FIREBASE_MESSAGING_SENDER_ID=...
-# FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 ```
 
-If the Firebase web variables are not set, the frontend falls back to an isolated guest session for local demos.
-If you want to force local persistence during development, set `ARKAIS_FORCE_SQLITE=1`.
+Optional Firebase values:
 
-### Firestore security rules
+```env
+FIREBASE_MESSAGING_SENDER_ID=your-sender-id
+FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
+```
 
-This repo now includes Firestore rules in [`firestore.rules`](./firestore.rules) and a minimal [`firebase.json`](./firebase.json).
+### 4. Start The Frontend
+
+From the repo root:
+
+```bash
+python frontend_server.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:4173
+```
+
+The frontend server uses port `4173` by default. To change it:
+
+```powershell
+$env:ARKAIS_FRONTEND_PORT="4174"
+python frontend_server.py
+```
+
+### 5. Use Guest Mode Or Sign In
+
+When the modal appears:
+
+- choose Google Sign-In if Firebase web auth is configured
+- otherwise continue as guest or use email fallback
+
+Guest mode is enough for most hackathon testing.
+
+## Google Workspace Setup
+
+Google Workspace features require OAuth credentials and enabled Google APIs.
+
+### Required APIs
+
+Enable these APIs in the Google Cloud project:
+
+- Google Docs API
+- Google Drive API
+- Google Calendar API
+- Google Tasks API
+
+### OAuth Credentials
+
+Create an OAuth 2.0 Client ID for a web application in Google Cloud Console.
+
+Add redirect URIs for your environment. Examples:
+
+```text
+http://localhost:8765/
+https://your-auth-callback-service-url
+```
+
+For local development only, download the OAuth client JSON and save it as:
+
+```text
+ark_learning_agent/credentials.json
+auth_function/credentials.json
+```
+
+These files are ignored by Git and should not be committed. For production deployment, prefer Secret Manager, mounted secrets, or deployment-time configuration rather than storing OAuth client files in the repository.
+
+### OAuth Callback
+
+The `auth_function/` service handles OAuth callbacks and stores the user's Google credentials in Firestore:
+
+```text
+users/{uid}/integrations/google_oauth
+```
+
+This keeps Google saves separate from normal Firebase web sign-in.
+
+## Firestore Rules
+
+This repo includes:
+
+- [`firestore.rules`](./firestore.rules)
+- [`firebase.json`](./firebase.json)
 
 The rules assume:
 
-*   application data lives under `users/{uid}/...`
-*   a signed-in Firebase user can only access their own `users/{uid}` subtree
-*   sensitive service-managed records such as `users/{uid}/integrations/google_oauth` and top-level `browser_clients` are denied for direct client access
+- app data lives under `users/{uid}/...`
+- signed-in Firebase users can only access their own user subtree
+- service-managed Google OAuth records are denied from direct client access
+- browser client records are service-managed
 
-To deploy the rules:
+Deploy rules:
 
 ```bash
 firebase deploy --only firestore:rules
 ```
 
-If you do not use the Firebase CLI yet, install it first and log in:
+## Retention And Cleanup
 
-```bash
-npm install -g firebase-tools
-firebase login
-firebase use your-project-id
-```
+Guest users and chat history include `expires_at` fields.
 
-### Retention and cleanup
+Defaults:
 
-Guest identities and chat history now include an `expires_at` field so you can manage retention cleanly.
+- browser client identities: 30 days
+- chat sessions: 90 days
+- chat messages: 90 days
 
-Current defaults:
-
-*   guest/browser identities: 30 days
-*   chat sessions: 90 days
-*   chat messages: 90 days
-
-Override them with environment variables:
+Override values:
 
 ```env
 ARKAIS_BROWSER_CLIENT_RETENTION_DAYS=30
@@ -111,132 +571,38 @@ ARKAIS_CHAT_SESSION_RETENTION_DAYS=90
 ARKAIS_CHAT_MESSAGE_RETENTION_DAYS=90
 ```
 
-Run a dry-run cleanup:
+Dry-run cleanup:
 
 ```bash
-python3 scripts/cleanup_expired_data.py
+python scripts/cleanup_expired_data.py
 ```
 
-Apply the cleanup:
+Apply cleanup:
 
 ```bash
-python3 scripts/cleanup_expired_data.py --apply
+python scripts/cleanup_expired_data.py --apply
 ```
 
-If you want Firestore to enforce expiry automatically, configure TTL policies on these collection groups using the `expires_at` field:
+For production, configure Firestore TTL policies on the `expires_at` field for:
 
-*   `users`
-*   `browser_clients`
-*   `chat_sessions`
-*   `messages`
+- `users`
+- `browser_clients`
+- `chat_sessions`
+- `messages`
 
-Google Workspace OAuth tokens now live under each user record at:
+## Cloud Run Deployment
 
-*   `users/{uid}/integrations/google_oauth`
+The frontend can be deployed to Cloud Run. The top-level `Dockerfile` starts `frontend_server.py`, which serves both the static UI and API.
 
-Supported local material upload types in the current prototype:
+Local secret files such as `.env`, `credentials.json`, token files, SQLite databases, and uploaded learner materials are excluded from Docker and Cloud Build uploads by default. If production Google OAuth is required, provide credentials through a secure deployment mechanism instead of committing them.
 
-*   Text and notes: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.css`, `.js`, `.py`
-*   Images for multimodal tutoring: `.png`, `.jpg`, `.jpeg`, `.webp`
-
-### 2. Configure Google OAuth Credentials
-
-1.  In your GCP Console, go to **APIs & Services** > **Credentials**.
-2.  Create an **OAuth 2.0 Client ID** (Web application).
-3.  Add your redirect URIs (e.g., `http://localhost:8765/` for local testing, or the URL of your deployed `auth_function`).
-4.  Download the JSON file and save it as `credentials.json` in **both** the `ark_learning_agent/` and `auth_function/` directories.
-
-### 3. Deploy the Auth Function (Optional / Production)
-
-If running in the cloud, you can deploy the webhook to GCP Cloud Functions:
-
-```bash
-cd auth_function
-gcloud functions deploy auth_callback \
-  --runtime python311 \
-  --trigger-http \
-  --allow-unauthenticated \
-  --project your-project-id \
-  --region us-central1
-```
-
-Ensure that the resulting trigger URL matches the redirect URI specified in your `credentials.json` and GCP Console.
-
-## 💻 Usage
-
-To start interacting with the agents:
-
-1.  Ensure you have initialized your Python environment and the SQLite/Firestore databases are accessible.
-2.  Run the agent application. The MCP Server will launch internally as a subprocess.
-3.  Whenever the agents attempt to interact with Google Workspace tools for the first time, you will be provided with an OAuth authorization URL if no stored Google Workspace token exists for the signed-in learner identity.
-4.  Click the authorization link, approve the required scopes, and the `auth_function` will catch the redirect, saving your secure token centrally.
-
-## 🖥️ Minimal Frontend
-
-A simple static frontend is available in [`frontend/`](./frontend) for a lightweight local UI prototype.
-
-Run the connected frontend from the repo root:
-
-```bash
-python3 frontend_server.py
-```
-
-Then open `http://127.0.0.1:4173`.
-
-The frontend server uses port `4173` by default so it does not clash with a service already using port `8000`. You can override it with `ARKAIS_FRONTEND_PORT`.
-
-This frontend currently provides:
-
-*   A minimal ARKAIS chat interface
-*   Firebase Auth based Google Sign-In when configured, with isolated guest sessions for local demos
-*   A study console that sends requests to the local Python ADK agent via `/api/chat`
-*   A learner-state strip showing the current topic, activity count, and next recommended action
-*   A diagnostic panel that generates a short assessment, scores it, and updates the mastery board
-*   A roadmap panel that creates milestone-based plans, tracks session progress, and triggers recovery rebuilds
-*   A materials panel for uploads, grounded Q&A, and source selection
-*   Browser voice controls for dictation and spoken tutor replies
-*   An insights panel for intervention risk, evaluation coverage, and weekly report generation
-*   A dashboard overview with key learner metrics and quick section navigation
-*   An architecture panel with Google-native readiness and runtime metrics
-*   A judge demo kit panel with personas, pitch copy, demo metrics, and presentation steps
-
-It serves the static files and API from the same local server, so no extra frontend tooling is required.
-
-## ☁️ Deploy Frontend To Cloud Run
-
-The frontend can be deployed as its own Cloud Run service directly from this repo.
-
-### What this deploys
-
-This deploy runs [`frontend_server.py`](./frontend_server.py), which:
-
-*   Serves the static frontend
-*   Exposes `/api/chat`
-*   Calls the local Python ADK agent inside the same Cloud Run container
-
-### Before you deploy
-
-1.  Install and authenticate the Google Cloud CLI:
-
-```bash
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-```
-
-2.  Enable the required APIs:
+### Required Google Cloud APIs
 
 ```bash
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
 ```
 
-3.  Make sure your runtime configuration exists for the agent:
-
-*   Required environment variables such as `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_GENAI_USE_VERTEXAI`
-*   Your `ark_learning_agent/credentials.json` if you want Google Docs / Calendar / Tasks OAuth flows to work from this service
-
-### Deploy command
-
-From the repo root, run:
+### Deploy Frontend Service
 
 ```bash
 gcloud run deploy arkais-frontend \
@@ -246,87 +612,108 @@ gcloud run deploy arkais-frontend \
   --set-env-vars GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_USE_VERTEXAI=1
 ```
 
-Replace `YOUR_PROJECT_ID` with your real Google Cloud project ID.
+### One-Command Deployment Script
 
-### If you need credentials.json in Cloud Run
+The repo also includes:
 
-If this service needs Google OAuth tool access, the container must include the same OAuth client config expected by the agent. The simplest approach is:
+```text
+scripts/deploy_gcp.sh
+```
 
-1.  Put `credentials.json` in [`ark_learning_agent/`](./ark_learning_agent)
-2.  Deploy from source so the file is included in the built image
-
-If you do not need Google Docs / Calendar / Tasks yet, you can deploy without it.
-
-### After deploy
-
-1.  Wait for the build and deploy to finish
-2.  Open the Cloud Run service URL shown by `gcloud`
-3.  Sign in with Google or continue as a guest session
-4.  Start chatting with the agent
-
-### Notes
-
-*   Cloud Run requires the service to listen on the `PORT` environment variable. [`frontend_server.py`](./frontend_server.py) now supports that.
-*   This repo now includes a top-level [`Dockerfile`](./Dockerfile) so Cloud Run deploys the correct app entrypoint: `python3 frontend_server.py`.
-*   Without that explicit container entrypoint, Cloud Run source deploy may auto-detect and start the Google ADK FastAPI runtime instead of the frontend server.
-
-## 🔧 One-Command GCP Deploy
-
-A repo-level deploy script is included at [`scripts/deploy_gcp.sh`](./scripts/deploy_gcp.sh). It will:
-
-*   enable the required Google Cloud APIs
-*   deploy the OAuth callback as its own Cloud Run service
-*   deploy `ark_learning_agent` as its own Cloud Run service
-*   capture the callback URL and agent URL automatically
-*   deploy the frontend server to Cloud Run with matching `AUTH_CALLBACK_URL` and `ARKAIS_AGENT_API_URL`
-
-### 1. Prepare the deploy env file
+Prepare env:
 
 ```bash
 cp deploy/.deploy.env.example deploy/.deploy.env
 ```
 
-Edit [`deploy/.deploy.env`](./deploy/.deploy.env) with your real project and Firebase values.
-
-### 2. Make sure OAuth credentials are present
-
-These files should exist before deploying:
-
-*   [`ark_learning_agent/credentials.json`](./ark_learning_agent/credentials.json)
-*   [`auth_function/credentials.json`](./auth_function/credentials.json)
-
-### 3. Run the full deploy
+Edit `deploy/.deploy.env`, then run:
 
 ```bash
 bash scripts/deploy_gcp.sh all
 ```
 
-### 4. Deploy pieces separately if needed
-
-Deploy only the OAuth callback:
+Deploy individual services:
 
 ```bash
 bash scripts/deploy_gcp.sh auth
-```
-
-Deploy only the standalone agent:
-
-```bash
 bash scripts/deploy_gcp.sh agent
-```
-
-Deploy only the frontend service:
-
-```bash
 bash scripts/deploy_gcp.sh frontend
 ```
 
-The script prints the auth callback URL, standalone agent URL, and frontend URL when deployment succeeds.
+## Testing
 
-If your existing Cloud Run auth callback service is named `auth-function`, set:
+Run the available test suite:
 
 ```bash
-AUTH_SERVICE_NAME=auth-function
+pytest
 ```
 
-*Happy Learning with ARKAIS!*
+For manual product testing, follow:
+
+```text
+HACKATHON_TESTER_GUIDE.md
+```
+
+## Demo Prompts
+
+Useful Tutor prompts:
+
+```text
+Teach me overfitting in machine learning with one simple example.
+```
+
+```text
+Quiz me on supervised, unsupervised, and reinforcement learning.
+```
+
+```text
+Explain the machine learning pipeline in beginner-friendly terms.
+```
+
+Useful Roadmap inputs:
+
+```text
+Topic: Introduction to Machine Learning
+Goal: Prepare for an exam
+Level: Beginner
+Study time: 1 hour per day
+Deadline: 14 days
+```
+
+Useful Materials prompt:
+
+```text
+Using my uploaded notes, create a mock test that follows the uploaded exam style.
+```
+
+Useful Insights flow:
+
+```text
+Refresh insights after taking a diagnostic or generating a roadmap, then open the weekly report.
+```
+
+## Notes For Evaluators
+
+Some features depend on external configuration:
+
+- Gemini or Vertex AI credentials are required for live AI generation.
+- Firebase web config is required for production Google Sign-In.
+- Firestore is required for cloud persistence.
+- Google OAuth credentials are required for Docs, Drive, Calendar, and Tasks.
+
+If those are not configured, ARKAIS still supports a local guest demo using SQLite fallback, but Google Workspace save actions may return an auth or configuration message.
+
+## Project Status
+
+ARKAIS is a hackathon-ready prototype with an end-to-end learning workflow:
+
+- tutor chat
+- diagnostics
+- mastery tracking
+- roadmap generation
+- materials upload
+- mock-test generation
+- insights and reports
+- Google Workspace integration path
+
+The included mock ML files are intentionally small so judges can test the materials and mock-test workflow quickly.
