@@ -144,7 +144,49 @@ def _extract_text_from_pdf(blob: bytes) -> str:
         joined = "".join(re.findall(r"\(([^()]*)\)", group))
         if joined.strip():
             parts.append(joined.strip())
-    return re.sub(r"\s+", " ", " ".join(parts)).strip()
+    fallback_text = re.sub(r"\s+", " ", " ".join(parts)).strip()
+    if fallback_text:
+        return fallback_text
+
+    client = _get_genai_client()
+    if not client:
+        return ""
+    try:
+        response = client.models.generate_content(
+            model=MATERIAL_MODEL,
+            contents=[
+                (
+                    "Extract all readable study or exam content from this PDF. "
+                    "Preserve question text, answer options, headings, and key notes. "
+                    "Return concise plain text only."
+                ),
+                types.Part.from_bytes(data=blob, mime_type="application/pdf"),
+            ],
+            config=types.GenerateContentConfig(temperature=0.1),
+        )
+        return re.sub(r"\s+", " ", (response.text or "")).strip()
+    except Exception:
+        return ""
+
+
+def _extract_text_from_material_record(record: dict[str, Any]) -> str:
+    existing = str(record.get("extracted_text") or "").strip()
+    if existing:
+        return existing
+
+    path = Path(record.get("local_path", ""))
+    if not path.is_file():
+        return ""
+    try:
+        blob = path.read_bytes()
+    except OSError:
+        return ""
+    return _extract_text_from_payload(
+        str(record.get("name") or path.name),
+        str(record.get("mime_type") or ""),
+        blob,
+        "",
+    )
 
 
 def _extract_text_from_image(blob: bytes, name: str) -> str:
@@ -566,7 +608,11 @@ def tutor_from_materials(user_id: str, query: str, material_ids: list[str] | Non
     if not records:
         return {"status": "error", "message": "No materials found to tutor from."}
 
-    text_records = [record for record in records if record.get("extracted_text")]
+    text_records = []
+    for record in records:
+        extracted_text = _extract_text_from_material_record(record)
+        if extracted_text:
+            text_records.append({**record, "extracted_text": extracted_text[:50000]})
     image_records = [record for record in records if record.get("kind") == "image"]
     client = _get_genai_client()
 
@@ -626,6 +672,87 @@ def tutor_from_materials(user_id: str, query: str, material_ids: list[str] | Non
     }
 
 
+QUESTION_TYPE_ALIASES = {
+    "mcq": "multiple_choice",
+    "mcqs": "multiple_choice",
+    "multiple choice": "multiple_choice",
+    "multiple-choice": "multiple_choice",
+    "multiple_choice": "multiple_choice",
+    "short answer": "short_answer",
+    "short answers": "short_answer",
+    "short-answer": "short_answer",
+    "short_answer": "short_answer",
+    "essay": "essay",
+    "essays": "essay",
+}
+
+
+def _question_type_label(question_type: str) -> str:
+    return {
+        "multiple_choice": "multiple choice",
+        "short_answer": "short answer",
+        "essay": "essay",
+    }.get(question_type, question_type.replace("_", " "))
+
+
+def _parse_requested_question_structure(
+    structure: str,
+    sample_style: str = "",
+    default_count: int = 5,
+) -> tuple[int, dict[str, int], str]:
+    text = re.sub(r"\s+", " ", f"{structure or ''}\n{sample_style or ''}".lower()).strip()
+    requested: dict[str, int] = {}
+
+    for phrase, question_type in QUESTION_TYPE_ALIASES.items():
+        escaped = re.escape(phrase)
+        patterns = (
+            rf"\b(\d{{1,2}})\s+(?:x\s+)?{escaped}\b",
+            rf"\b{escaped}\s*[:x-]?\s*(\d{{1,2}})\b",
+        )
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                count = int(match.group(1))
+                if count > 0:
+                    requested[question_type] = requested.get(question_type, 0) + count
+
+    if re.search(r"\b(?:all|only)\s+(?:mcq|mcqs|multiple[- ]choice)\b", text) and not requested:
+        requested["multiple_choice"] = max(1, default_count)
+
+    if not requested and sample_style:
+        sample = str(sample_style or "")
+        question_markers = re.findall(r"(?im)^\s*(?:q(?:uestion)?\s*)?\d{1,2}[\).:-]\s+", sample)
+        option_groups = re.findall(r"(?ims)(?:^|\n)\s*A[\).:-].+?\n\s*B[\).:-].+?\n\s*C[\).:-].+?\n\s*D[\).:-]", sample)
+        sample_count = len(question_markers) or len(option_groups)
+        if sample_count:
+            requested["multiple_choice"] = min(sample_count, len(option_groups))
+            remaining = max(0, sample_count - requested["multiple_choice"])
+            if remaining:
+                requested["short_answer"] = remaining
+
+    if requested:
+        question_count = sum(requested.values())
+    else:
+        question_count = default_count
+
+    question_count = max(1, min(30, int(question_count or default_count or 5)))
+    if requested:
+        detail = ", ".join(
+            f"{count} {_question_type_label(question_type)}"
+            for question_type, count in requested.items()
+            if count > 0
+        )
+        instruction = (
+            f"Generate exactly {question_count} questions with this distribution: {detail}. "
+            "Do not replace requested question types with a default mix."
+        )
+    else:
+        instruction = (
+            f"Generate exactly {question_count} questions. If no explicit structure is provided, "
+            "use the uploaded sample exam's format when it is readable; otherwise use a balanced mix."
+        )
+    return question_count, requested, instruction
+
+
 def create_mock_test_from_materials(
     user_id: str,
     material_ids: list[str] | None = None,
@@ -641,13 +768,28 @@ def create_mock_test_from_materials(
         return {"status": "error", "message": "No materials found to build a mock test from."}
 
     try:
-        question_count = max(3, min(7, int(question_count)))
+        question_count = max(1, min(30, int(question_count)))
     except (TypeError, ValueError):
         question_count = 5
+    question_count, requested_distribution, structure_instruction = _parse_requested_question_structure(
+        structure=structure,
+        sample_style=sample_style,
+        default_count=question_count,
+    )
 
-    text_records = [record for record in records if record.get("extracted_text")]
+    text_records = []
+    for record in records:
+        extracted_text = _extract_text_from_material_record(record)
+        if extracted_text:
+            text_records.append({**record, "extracted_text": extracted_text[:50000]})
     if not text_records:
-        return {"status": "error", "message": "These materials do not contain enough text for a mock test yet."}
+        return {
+            "status": "error",
+            "message": (
+                "These materials do not contain enough readable text for a mock test yet. "
+                "If this is a scanned PDF, try re-uploading it after PDF extraction is enabled or upload a text/OCR copy."
+            ),
+        }
 
     topic_name = str(topic).strip() or Path(text_records[0].get("name", "uploaded material")).stem.replace("-", " ")
     client = _get_genai_client()
@@ -667,6 +809,7 @@ Goal: {goal or "Check real understanding from the uploaded notes"}
 Question count: {question_count}
 Requested structure: {structure or "Balanced exam with a mix of question types"}
 Sample exam style: {sample_style or "No sample style provided"}
+Resolved structure instruction: {structure_instruction}
 
 Materials:
 {joined}
@@ -690,7 +833,8 @@ Return JSON only with this shape:
 Requirements:
 - Use only the uploaded material.
 - Make the questions feel like a real mock test, not trivia.
-- Follow the requested structure and sample style closely when they are provided.
+- Follow the resolved structure instruction exactly when it names counts or question types.
+- If a sample exam is provided, imitate its question style, wording level, and format after reading it.
 - Include a mix of multiple choice, short answer, and essay when the structure suggests it.
 - Cover different ideas from the material where possible.
 - Keep wording simple and clear.
@@ -743,6 +887,19 @@ Requirements:
         questions = payload.get("questions") or []
     except Exception as exc:
         return {"status": "error", "message": f"Could not generate mock test: {exc}"}
+
+    if requested_distribution:
+        actual_distribution: dict[str, int] = {}
+        for question in questions:
+            question_type = str(question.get("question_type", "multiple_choice")).strip().lower()
+            if question_type not in {"multiple_choice", "short_answer", "essay"}:
+                question_type = "multiple_choice"
+            actual_distribution[question_type] = actual_distribution.get(question_type, 0) + 1
+        if any(actual_distribution.get(key, 0) != count for key, count in requested_distribution.items()):
+            return {
+                "status": "error",
+                "message": "The model did not follow the requested mock test structure. Please try again.",
+            }
 
     assessment = create_custom_assessment(
         user_id=user_id,

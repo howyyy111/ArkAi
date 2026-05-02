@@ -167,7 +167,7 @@
                                 <div class="chat-panel-header">
                                     <div>
                                         <p class="section-label">Tutor</p>
-                                        <h3>Ask one thing. Learn one step.</h3>
+                                        <h3><span>Ask one thing.</span> <span>Learn one step.</span></h3>
                                     </div>
                                     <div class="chat-panel-header-meta">
                                         <p class="state-summary">Ask a question, continue a session, or start
@@ -199,16 +199,16 @@
                                             </div>
                                             <div class="starter-prompts">
                                                 <button class="starter-chip" type="button"
-                                                    data-starter-prompt="Teach me Python loops simply with one example.">Teach
+                                                    data-starter-prompt="Teach me Python loops simply">Teach
                                                     me Python loops simply</button>
                                                 <button class="starter-chip" type="button"
-                                                    data-starter-prompt="Quiz me on this topic with 3 short questions.">Quiz
+                                                    data-starter-prompt="Quiz me on this topic">Quiz
                                                     me on this topic</button>
                                                 <button class="starter-chip" type="button"
-                                                    data-starter-prompt="Continue my roadmap session and keep it focused.">Continue
+                                                    data-starter-prompt="Continue my roadmap session">Continue
                                                     my roadmap session</button>
                                                 <button class="starter-chip" type="button"
-                                                    data-starter-prompt="Turn this into one short lesson and one small exercise.">Give
+                                                    data-starter-prompt="Give me one lesson and one exercise">Give
                                                     me one lesson and one exercise</button>
                                             </div>
                                         </div>
@@ -230,7 +230,7 @@
                                             </svg>
                                         </button>
                                         <textarea id="prompt" name="prompt" rows="1"
-                                            placeholder="Ask a clear question, paste a topic, or continue a roadmap session."></textarea>
+                                            placeholder="Ask or paste a topic."></textarea>
                                         <button id="submit-button" class="primary-button send-submit-button"
                                             type="submit" aria-label="Send message">
                                             <span class="button-text">Send</span>
@@ -450,6 +450,14 @@
                         <section id="diagnostic-workspace" class="plan-workspace content-card panel-lite hidden"
                             aria-live="polite">
                             <div class="workspace-header">
+                                <button id="materials-mock-back-button"
+                                    class="ghost-button mini-button plan-back-button hidden" type="button"
+                                    aria-label="Back to materials" title="Back to materials">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m15 18-6-6 6-6"></path>
+                                    </svg>
+                                </button>
                                 <div>
                                     <p class="section-label">Diagnostic</p>
                                     <h3>Answer the quick check</h3>
@@ -575,7 +583,7 @@
                                     </label>
 
                                     <button id="upload-material-button" class="primary-button wide-button"
-                                        type="button">Upload material</button>
+                                        type="button" disabled aria-disabled="true">Upload material</button>
                                 </section>
 
                                 <section class="content-card panel-lite helper-card materials-action-card">

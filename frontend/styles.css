@@ -1005,6 +1005,20 @@ textarea:disabled {
     padding-bottom: 12px;
 }
 
+.focus-view[data-view="tutor"] .chat-panel-header h3 {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin-top: 4px;
+    color: #0f172a;
+    letter-spacing: 0;
+}
+
+.focus-view[data-view="tutor"] .chat-panel-header h3 span:last-child {
+    color: #0f172a;
+}
+
 .chat-panel-header .state-summary {
     max-width: 240px;
     text-align: right;
@@ -2775,14 +2789,47 @@ textarea:focus {
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-    transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    animation: starter-chip-float 6s ease-in-out infinite;
+    transition: transform 180ms ease, background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .starter-chip:hover {
-    transform: translateY(-1px);
+    transform: translateY(-3px);
+    animation-play-state: paused;
     background: rgba(255, 255, 255, 0.96);
     border-color: rgba(23, 23, 23, 0.16);
     box-shadow: 0 10px 24px rgba(18, 18, 18, 0.06);
+}
+
+.starter-chip:nth-child(2) {
+    animation-delay: 0.8s;
+}
+
+.starter-chip:nth-child(3) {
+    animation-delay: 1.5s;
+}
+
+.starter-chip:nth-child(4) {
+    animation-delay: 2.2s;
+}
+
+@keyframes starter-chip-float {
+    0%,
+    100% {
+        transform: translateY(0);
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+    }
+
+    50% {
+        transform: translateY(-4px);
+        box-shadow: 0 13px 28px rgba(15, 23, 42, 0.1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .starter-chip {
+        animation: none;
+    }
 }
 
 .message {
@@ -3360,6 +3407,10 @@ textarea:focus {
 .next-focus-item p {
     margin: 2px 0 0;
     line-height: 1.45;
+}
+
+.insights-risk-label {
+    margin-top: 10px !important;
 }
 
 .secondary-panel {
@@ -7556,6 +7607,18 @@ body.sidebar-collapsed .sidebar-bottom {
     box-shadow: none !important;
     transform: none !important;
     outline: none !important;
+}
+
+#upload-material-button:disabled,
+#upload-material-button[aria-disabled="true"],
+#upload-material-button:disabled:hover {
+    background: #f3f4f6 !important;
+    border: 1px solid #e5e7eb !important;
+    color: #9ca3af !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    cursor: not-allowed !important;
 }
 
 @media (max-width: 760px) {

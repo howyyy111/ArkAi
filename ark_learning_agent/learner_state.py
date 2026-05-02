@@ -3,6 +3,7 @@ import os
 import re
 import sqlite3
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1127,15 +1128,6 @@ def create_custom_assessment(
     if not normalized_questions:
         return {"status": "error", "message": "No valid questions were generated."}
 
-    save_learner_profile(
-        user_id=user_id,
-        topic=normalized_topic,
-        level=level,
-        learning_style=learning_style,
-        available_time=available_time,
-        goal=goal,
-    )
-
     created_at = _utc_now()
     assessment_id = str(uuid.uuid4())
     record = {
@@ -1301,6 +1293,50 @@ def _get_assessment_record(user_id: str, assessment_id: str) -> dict[str, Any] |
         "created_at": row[11],
         "submitted_at": row[12],
     }
+
+
+def _list_assessment_records(user_id: str, limit: int = 30) -> list[dict[str, Any]]:
+    db = get_firestore_client()
+    normalized_limit = max(1, int(limit or 30))
+    if db:
+        records = []
+        for snapshot in _user_assessments_collection(db, user_id).stream():
+            payload = snapshot.to_dict() or {}
+            payload["assessment_id"] = payload.get("assessment_id") or snapshot.id
+            records.append(payload)
+        records.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return records[:normalized_limit]
+
+    init_sqlite_fallback()
+    conn = _connect_sqlite()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT assessment_id, topic, assessment_type, level, goal, status, question_count, score, created_at, submitted_at
+        FROM assessments
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (user_id, normalized_limit),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "assessment_id": row[0],
+            "topic": row[1],
+            "assessment_type": row[2],
+            "level": row[3],
+            "goal": row[4],
+            "status": row[5],
+            "question_count": row[6],
+            "score": row[7],
+            "created_at": row[8],
+            "submitted_at": row[9],
+        }
+        for row in rows
+    ]
 
 
 def submit_assessment(
@@ -1889,6 +1925,129 @@ def _dedupe_focus_topics(values: list[str], fallback: str) -> list[str]:
     return topics
 
 
+def _clean_roadmap_topic_label(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n?.!,;:")
+    if not text:
+        return ""
+    parts = [part.strip(" \t\r\n?.!,;:") for part in re.split(r"[.!?;]+", text) if part.strip()]
+    if len(parts) >= 2:
+        first = parts[0]
+        rest = " ".join(parts[1:]).lower()
+        if first and len(first.split()) <= 4 and re.search(
+            r"\b(?:month|week|day|days|tomorrow|today|study|morning|afternoon|evening|am|pm|start|starting|prefer|until|till)\b",
+            rest,
+        ):
+            return first
+    return text
+
+
+def _looks_like_uploaded_filename(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\.(?:txt|md|pdf|docx?|pptx?|xlsx?|csv|tsv|json|html?|css|js|py)\b",
+            str(value or ""),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _is_meaningful_learning_topic(value: str) -> bool:
+    focus = _infer_learning_focus(value, "")
+    if not focus or _looks_like_uploaded_filename(focus):
+        return False
+    lowered = focus.lower().strip()
+    if lowered in {"can you summarize that", "summarize that", "can you explain that", "uploaded materials"}:
+        return False
+    if re.search(r"\b(?:summari[sz]e|explain|teach|quiz|roadmap|upload|download)\b", lowered):
+        return False
+    return bool(re.search(r"[a-zA-Z]", focus))
+
+
+def _topic_terms(value: str) -> set[str]:
+    stemmed = re.sub(
+        r"\.(?:txt|md|pdf|docx?|pptx?|xlsx?|csv|tsv|json|html?|css|js|py)\b",
+        " ",
+        str(value or "").lower(),
+    )
+    terms = set(re.findall(r"[a-z0-9]+", stemmed))
+    return {
+        term
+        for term in terms
+        if len(term) >= 3 and term not in {"the", "and", "for", "from", "with", "this", "that", "session"}
+    }
+
+
+def _weak_topic_matches_roadmap_topic(weak_topic: str, roadmap_topic: str) -> bool:
+    weak_terms = _topic_terms(weak_topic)
+    roadmap_terms = _topic_terms(roadmap_topic)
+    if not weak_terms or not roadmap_terms:
+        return False
+    if weak_terms & roadmap_terms:
+        return True
+    for weak_term in weak_terms:
+        for roadmap_term in roadmap_terms:
+            if len(weak_term) >= 5 and len(roadmap_term) >= 5 and (
+                weak_term.startswith(roadmap_term[:5]) or roadmap_term.startswith(weak_term[:5])
+            ):
+                return True
+    return False
+
+
+def _roadmap_relevant_weak_topics(values: list[str], roadmap_topic: str) -> list[str]:
+    relevant: list[str] = []
+    for value in values:
+        focus = _infer_learning_focus(value, "")
+        if not focus or _looks_like_uploaded_filename(focus):
+            continue
+        if _weak_topic_matches_roadmap_topic(focus, roadmap_topic):
+            relevant.append(focus)
+    return relevant
+
+
+def _sanitize_roadmap_file_focuses(roadmap: dict[str, Any]) -> dict[str, Any]:
+    cleaned = deepcopy(roadmap)
+    raw_topic_label = str(cleaned.get("topic") or "General learning").strip() or "General learning"
+    topic_label = _clean_roadmap_topic_label(raw_topic_label) or raw_topic_label
+    changed = False
+    if topic_label != raw_topic_label:
+        cleaned["topic"] = topic_label
+        cleaned["goal"] = f"Learn {topic_label}"
+        changed = True
+    for phase in cleaned.get("phases", []):
+        phase_changed = False
+        phase_focus = topic_label
+        for index, session in enumerate(phase.get("sessions", []), start=1):
+            focus = str(session.get("focus") or "").strip()
+            title = str(session.get("title") or "").strip()
+            clean_focus = _clean_roadmap_topic_label(focus)
+            clean_title_base = _clean_roadmap_topic_label(
+                re.sub(r"\s+session\s+\d+\s*$", "", title, flags=re.IGNORECASE)
+            )
+            if (
+                _looks_like_uploaded_filename(focus)
+                or _looks_like_uploaded_filename(title)
+                or (clean_focus and clean_focus != focus)
+                or (clean_title_base and clean_title_base != re.sub(r"\s+session\s+\d+\s*$", "", title, flags=re.IGNORECASE).strip())
+            ):
+                session["focus"] = topic_label
+                session["title"] = f"{topic_label.title()} session {index}"
+                phase_changed = True
+                changed = True
+            phase_focus = str(session.get("focus") or phase_focus).strip() or phase_focus
+        if phase_changed:
+            phase["focus_topics"] = [phase_focus]
+            phase["goal"] = re.sub(
+                r"Move .+? from ",
+                f"Move {phase_focus} from ",
+                str(phase.get("goal") or ""),
+                count=1,
+            ) or f"Move {phase_focus} from beginner understanding toward stronger applied mastery."
+            phase["expected_outcome"] = f"Learner can explain and apply {phase_focus} in a short exercise."
+    if changed:
+        cleaned["revision_reason"] = cleaned.get("revision_reason") or "cleaned roadmap focus"
+    return cleaned
+
+
 def _roadmap_has_prompt_like_focus(roadmap: dict[str, Any]) -> bool:
     for phase in roadmap.get("phases", []):
         for session in phase.get("sessions", []):
@@ -1917,13 +2076,19 @@ def _build_roadmap_phases(
     phases = []
     spacing = max(2, deadline_days // max(total_phases, 1))
     minutes = available_time or 45
+    total_sessions_target = max(1, min(30, int(deadline_days or 1)))
+    base_sessions_per_phase = total_sessions_target // max(total_phases, 1)
+    extra_sessions = total_sessions_target % max(total_phases, 1)
+    scheduled_day = 0
 
     for index in range(total_phases):
         phase_id = f"phase-{index + 1}"
         due_offset = min(deadline_days, spacing * (index + 1))
         primary_focus = focus_topics[min(index, len(focus_topics) - 1)] if focus_topics else topic_label
         checkpoint_type = "recovery quiz" if recovery_mode and index == total_phases - 1 else "mastery quiz"
-        session_total = 2 if recovery_mode else 3
+        session_total = base_sessions_per_phase + (1 if index < extra_sessions else 0)
+        if recovery_mode:
+            session_total = max(1, min(session_total, 2))
         sessions = []
         for session_index in range(session_total):
             session_id = f"{phase_id}-session-{session_index + 1}"
@@ -1935,11 +2100,12 @@ def _build_roadmap_phases(
                     "duration_minutes": minutes,
                     "status": "planned",
                     "due_date": _date_plus_days(
-                        min(deadline_days, index * spacing + session_index + 1),
+                        min(max(deadline_days - 1, 0), scheduled_day),
                         start_date=start_date,
                     ),
                 }
             )
+            scheduled_day += 1
 
         phases.append(
             {
@@ -2011,6 +2177,7 @@ def build_or_update_roadmap(
     available_time: int | None = None,
     deadline_days: int = 14,
     start_date: str = "",
+    preferred_calendar_time: str = "",
     force_rebuild: bool = False,
     revision_reason: str = "",
     recovery_mode_override: bool | None = None,
@@ -2020,18 +2187,22 @@ def build_or_update_roadmap(
     mastery = get_mastery_snapshot(user_id)
     raw_weak_topics = [item.get("topic", "") for item in mastery.get("topics", []) if item.get("score", 0.0) < 0.65][:3]
     current = _load_roadmap(user_id)
+    non_file_weak_topics = [
+        item for item in raw_weak_topics if not _looks_like_uploaded_filename(_infer_learning_focus(item, ""))
+    ]
 
     normalized_topic = (
-        _infer_learning_focus(str(topic or ""), "")
-        or _infer_learning_focus(str(profile.get("topic") or ""), "")
-        or (_dedupe_focus_topics(raw_weak_topics, "")[0] if _dedupe_focus_topics(raw_weak_topics, "") else "")
+        _clean_roadmap_topic_label(_infer_learning_focus(str(topic or ""), ""))
+        or _clean_roadmap_topic_label(_infer_learning_focus(str(profile.get("topic") or ""), ""))
+        or (_dedupe_focus_topics(non_file_weak_topics, "")[0] if _dedupe_focus_topics(non_file_weak_topics, "") else "")
         or "General learning"
     )
+    relevant_weak_topics = _roadmap_relevant_weak_topics(raw_weak_topics, normalized_topic)
     normalized_goal = str(goal).strip() or profile.get("goal") or f"Build stronger mastery in {normalized_topic}"
     normalized_level = str(level).strip() or profile.get("level") or "beginner"
     normalized_time = available_time if available_time not in ("", None) else profile.get("available_time")
     normalized_time = _safe_int(normalized_time, 45) or 45
-    deadline_days = max(7, min(60, _safe_int(deadline_days, 14) or 14))
+    deadline_days = max(1, min(60, _safe_int(deadline_days, 14) or 14))
     normalized_start_date = str(start_date).strip()
     if normalized_start_date:
         try:
@@ -2053,12 +2224,17 @@ def build_or_update_roadmap(
     has_prompt_like_focus = bool(current and _roadmap_has_prompt_like_focus(current))
 
     if current and not force_rebuild and not is_new_topic_request and not is_new_start_date_request and not has_prompt_like_focus:
-        recovery_mode, auto_reason = _should_recover(current, _dedupe_focus_topics(raw_weak_topics, normalized_topic))
+        current_relevant_weak_topics = _roadmap_relevant_weak_topics(
+            raw_weak_topics,
+            str(current.get("topic") or normalized_topic),
+        )
+        recovery_mode, auto_reason = _should_recover(current, current_relevant_weak_topics)
         if not recovery_mode:
+            cleaned_current = _sanitize_roadmap_file_focuses(current)
             return {
                 "status": "success",
-                "roadmap": current,
-                "summary": _roadmap_summary(current),
+                "roadmap": cleaned_current,
+                "summary": _roadmap_summary(cleaned_current),
                 "message": "Existing roadmap is still active.",
             }
 
@@ -2086,7 +2262,7 @@ def build_or_update_roadmap(
         level=normalized_level,
         available_time=normalized_time,
         deadline_days=deadline_days,
-        weak_topics=_dedupe_focus_topics(raw_weak_topics, normalized_topic),
+        weak_topics=_dedupe_focus_topics(relevant_weak_topics, normalized_topic) if recovery_mode else [],
         recovery_mode=recovery_mode,
         start_date=normalized_start_date,
     )
@@ -2098,6 +2274,7 @@ def build_or_update_roadmap(
         "available_time": normalized_time,
         "deadline_days": deadline_days,
         "start_date": normalized_start_date,
+        "preferred_calendar_time": str(preferred_calendar_time or "").strip(),
         "mode": "recovery" if recovery_mode else "standard",
         "status": "active",
         "revision_reason": auto_reason,
@@ -2117,6 +2294,7 @@ def get_roadmap(user_id: str) -> dict[str, Any]:
     roadmap = _load_roadmap(user_id)
     if not roadmap:
         return {"status": "not_found", "message": "No roadmap found."}
+    roadmap = _sanitize_roadmap_file_focuses(roadmap)
     return {
         "status": "success",
         "roadmap": roadmap,
@@ -2262,6 +2440,10 @@ def get_intervention_plan(user_id: str) -> dict[str, Any]:
     return {
         "status": "success",
         "risk_level": risk_level,
+        "overall_mastery": overall_score,
+        "completed_sessions": completed_sessions,
+        "missed_sessions": missed_sessions,
+        "weak_topics": weak_topics,
         "triggers": triggers,
         "recommended_actions": recommended_actions,
         "summary": summary,
@@ -2366,17 +2548,53 @@ def get_evaluation_snapshot(user_id: str) -> dict[str, Any]:
     mastery = state.get("mastery", {})
     roadmap_summary = state.get("roadmap_summary", {})
     history = get_learning_history(user_id, limit=20).get("history", [])
+    assessments = _list_assessment_records(user_id, limit=30)
+    submitted_assessments = [
+        item for item in assessments if str(item.get("status") or "").lower() == "submitted"
+    ]
+    mock_tests = [
+        item for item in assessments if str(item.get("assessment_type") or "").lower() == "mock_test"
+    ]
     assessment_count = sum(
         1 for item in history if item.get("activity_type") in {"diagnostic", "assessment", "checkpoint", "quiz"}
     )
+    if not assessment_count:
+        assessment_count = len(submitted_assessments)
     progress_count = len(history)
-    grounding_available = False
+    materials = []
     try:
-        from materials import list_learning_materials
+        from .materials import list_learning_materials
+    except ImportError:
+        try:
+            from materials import list_learning_materials
+        except ImportError:
+            list_learning_materials = None
 
-        grounding_available = bool(list_learning_materials(user_id).get("materials"))
-    except Exception:
-        grounding_available = False
+    if list_learning_materials:
+        try:
+            materials = list_learning_materials(user_id).get("materials") or []
+        except Exception:
+            materials = []
+    grounding_available = bool(materials)
+    material_names = [str(item.get("name") or "").strip() for item in materials if item.get("name")]
+    activity_counts: dict[str, int] = {}
+    for item in history:
+        activity_type = str(item.get("activity_type") or "activity").strip() or "activity"
+        activity_counts[activity_type] = activity_counts.get(activity_type, 0) + 1
+    assessment_scores = [
+        _safe_float(item.get("score"), 0.0)
+        for item in submitted_assessments
+        if item.get("score") is not None
+    ] or [
+        _safe_float(item.get("score"), 0.0)
+        for item in history
+        if item.get("score") is not None
+    ]
+    average_assessment_score = (
+        round(sum(assessment_scores) / len(assessment_scores), 3)
+        if assessment_scores
+        else None
+    )
 
     warnings = []
     if assessment_count == 0:
@@ -2386,19 +2604,80 @@ def get_evaluation_snapshot(user_id: str) -> dict[str, Any]:
     if not grounding_available:
         warnings.append("No learner materials uploaded yet.")
 
+    strengths = []
+    risks = []
+    recommendations = []
+    completed_sessions = _safe_int(roadmap_summary.get("completed_sessions"), 0)
+    missed_sessions = _safe_int(roadmap_summary.get("missed_sessions"), 0)
+    completion_rate = _safe_float(roadmap_summary.get("completion_rate"), 0.0)
+    overall_mastery = _safe_float(mastery.get("overall_score"), 0.0)
+    weak_topics = state.get("weak_topics", [])
+
+    if grounding_available:
+        strengths.append(f"Uses {len(materials)} uploaded source material(s) for grounded practice.")
+    if completed_sessions:
+        strengths.append(f"Completed {completed_sessions} roadmap session(s).")
+    if assessment_count:
+        strengths.append(f"Has {assessment_count} submitted assessment signal(s).")
+    if mock_tests:
+        strengths.append(f"Generated {len(mock_tests)} material-based mock test(s).")
+
+    if missed_sessions:
+        risks.append(f"Catch up on {missed_sessions} missed roadmap session(s) before adding new topics.")
+    if weak_topics:
+        risks.append(f"Retest {weak_topics[0]} after one short review session.")
+    if assessment_count == 0:
+        risks.append("Submit one assessment so progress is measured, not guessed.")
+    if grounding_available and not mock_tests:
+        risks.append("Turn uploaded materials into one mock test to check exam readiness.")
+
+    next_session = roadmap_summary.get("next_session") or {}
+    if weak_topics:
+        recommendations.append(f"Review {weak_topics[0]} with a short Tutor lesson, then retest.")
+    if next_session.get("title"):
+        recommendations.append(f"Continue the roadmap with: {next_session['title']}.")
+    elif not roadmap_summary.get("phase_count"):
+        recommendations.append("Create a roadmap from the current learning topic.")
+    if grounding_available and not mock_tests:
+        recommendations.append("Create a mock test from the uploaded materials to check real exam readiness.")
+    if not assessment_count:
+        recommendations.append("Submit one diagnostic or mock test so Insights can measure learning quality.")
+    if not recommendations:
+        recommendations.append("Keep the current cadence and add a short checkpoint quiz after the next session.")
+
     return {
         "status": "success",
         "coverage": {
             "assessment_count": assessment_count,
+            "assessment_total": len(assessments),
+            "submitted_assessment_count": len(submitted_assessments),
+            "mock_test_count": len(mock_tests),
             "progress_events": progress_count,
             "roadmap_present": bool(roadmap_summary.get("phase_count")),
             "grounding_available": grounding_available,
+            "material_count": len(materials),
         },
         "quality": {
-            "overall_mastery_score": mastery.get("overall_score", 0.0),
-            "completion_rate": roadmap_summary.get("completion_rate", 0.0),
-            "missed_sessions": roadmap_summary.get("missed_sessions", 0),
+            "overall_mastery_score": overall_mastery,
+            "average_assessment_score": average_assessment_score,
+            "completion_rate": completion_rate,
+            "missed_sessions": missed_sessions,
+            "completed_sessions": completed_sessions,
         },
+        "journey": {
+            "current_topic": state.get("current_topic", ""),
+            "recent_topics": state.get("recent_topics", []),
+            "activity_counts": activity_counts,
+            "material_names": material_names[:4],
+            "roadmap_topic": (state.get("roadmap") or {}).get("topic", ""),
+            "roadmap_total_sessions": roadmap_summary.get("total_sessions", 0),
+            "roadmap_completed_sessions": completed_sessions,
+            "roadmap_missed_sessions": missed_sessions,
+            "latest_activity": state.get("latest_activity", {}),
+        },
+        "strengths": strengths,
+        "risks": risks,
+        "recommended_actions": recommendations[:4],
         "warnings": warnings,
     }
 
@@ -2417,11 +2696,30 @@ def get_learner_state(user_id: str) -> dict[str, Any]:
     roadmap = roadmap_result.get("roadmap") if roadmap_result.get("status") == "success" else {}
     roadmap_summary = roadmap_result.get("summary") if roadmap_result.get("status") == "success" else {}
 
-    recent_topics = [item.get("topic") for item in history if item.get("topic")]
-    current_topic = profile.get("topic") or (recent_topics[0] if recent_topics else "")
+    recent_topics = _dedupe_focus_topics(
+        [
+            item.get("topic")
+            for item in history
+            if item.get("topic") and _is_meaningful_learning_topic(str(item.get("topic")))
+        ],
+        "",
+    )
+    profile_topic = (
+        _infer_learning_focus(str(profile.get("topic") or ""), "")
+        if _is_meaningful_learning_topic(str(profile.get("topic") or ""))
+        else ""
+    )
+    current_topic = profile_topic or (recent_topics[0] if recent_topics else "")
     completed_activities = len(history)
     latest_activity = history[0] if history else {}
-    weak_topics = [topic.get("topic", "") for topic in mastery.get("topics", []) if topic.get("score", 0.0) < 0.65][:3]
+    weak_topics = _dedupe_focus_topics(
+        [
+            topic.get("topic", "")
+            for topic in mastery.get("topics", [])
+            if topic.get("score", 0.0) < 0.65 and _is_meaningful_learning_topic(str(topic.get("topic", "")))
+        ],
+        "",
+    )[:3]
 
     recommended_next_action = "Take a short diagnostic and generate a roadmap."
     if roadmap_summary.get("missed_sessions", 0) >= 2:

@@ -78,6 +78,9 @@ class MaterialsMockTestRequest(ApiRequest):
     questionCount: Optional[int] = 5
     structure: Optional[str] = ""
     sampleStyle: Optional[str] = ""
+    sampleStyleFileName: Optional[str] = ""
+    sampleStyleFileMimeType: Optional[str] = ""
+    sampleStyleFileDataBase64: Optional[str] = ""
 
 class MaterialDeleteRequest(ApiRequest):
     materialId: Optional[str] = ""

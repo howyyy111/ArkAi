@@ -51,6 +51,7 @@ const diagnosticTimeUnitSelect = document.getElementById("diagnostic-time-unit")
 const diagnosticLevelSelect = document.getElementById("diagnostic-level");
 const diagnosticHomeStatus = document.getElementById("diagnostic-home-status");
 const assessmentStatus = document.getElementById("assessment-status");
+const materialsMockBackButton = document.getElementById("materials-mock-back-button");
 const diagnosticForm = document.getElementById("diagnostic-form");
 const diagnosticQuestions = document.getElementById("diagnostic-questions");
 const diagnosticResult = document.getElementById("diagnostic-result");
@@ -330,6 +331,7 @@ function updateAssessmentActions() {
   const hasMockAssessment = hasAssessment && activeAssessment?.assessment_type === "mock_test";
   saveAssessmentGoogleDocButton?.classList.toggle("hidden", !hasAssessment);
   downloadMaterialsMockTestButton?.classList.toggle("hidden", !hasMockAssessment);
+  materialsMockBackButton?.classList.toggle("hidden", !hasMockAssessment);
 }
 
 function downloadActiveAssessmentPdf() {
@@ -413,6 +415,51 @@ function validateSelectedFile(file, { fieldLabel = "File" } = {}) {
     return `${fieldLabel} is too large. Max size is ${formatFileSize(maxMaterialFileSizeBytes)}.`;
   }
   return null;
+}
+
+function roadmapProgressPercent(completedSessions, totalSessions, fallbackRate = null) {
+  const completed = Number(completedSessions || 0);
+  const total = Number(totalSessions || 0);
+  if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
+    return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+  }
+  const rate = Number(fallbackRate);
+  if (Number.isFinite(rate)) {
+    return Math.max(0, Math.min(100, Math.round(rate * 100)));
+  }
+  return 0;
+}
+
+function parseMockQuestionCount(structureText, fallback = 5) {
+  const text = String(structureText || "").toLowerCase();
+  const typePattern = "(?:mcqs?|multiple[-\\s]?choice|short[-\\s]?answers?|essays?)";
+  const counts = [];
+  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(?:x\\s+)?${typePattern}\\b`, "g"))) {
+    counts.push(Number(match[1]));
+  }
+  for (const match of text.matchAll(new RegExp(`\\b${typePattern}\\s*[:x-]?\\s*(\\d{1,2})\\b`, "g"))) {
+    counts.push(Number(match[1]));
+  }
+  if (!counts.length) {
+    const totalMatch = text.match(/\b(?:generate|make|create|include|total)\s+(\d{1,2})\s+(?:questions?|items?)\b/);
+    if (totalMatch) {
+      counts.push(Number(totalMatch[1]));
+    }
+  }
+  const total = counts.reduce((sum, count) => sum + (Number.isFinite(count) ? count : 0), 0);
+  if (total > 0) {
+    return Math.max(1, Math.min(30, total));
+  }
+  return fallback;
+}
+
+function updateUploadMaterialButtonState() {
+  if (!uploadMaterialButton || !materialFileInput) {
+    return;
+  }
+  const hasFile = Boolean(materialFileInput.files?.length);
+  uploadMaterialButton.disabled = !hasFile;
+  uploadMaterialButton.setAttribute("aria-disabled", hasFile ? "false" : "true");
 }
 
 function getTimeInMinutes(input, unitSelect) {
@@ -605,15 +652,20 @@ function getActiveSessionDetail() {
 
 function setActiveView(viewName) {
   const nextView = String(viewName || "tutor").trim() || "tutor";
+  setActiveNavigation(nextView);
+  focusViews.forEach((view) => {
+    view.classList.toggle("is-active", view.dataset.view === nextView);
+  });
+  window.localStorage.setItem(activeViewStorageKey, nextView);
+}
+
+function setActiveNavigation(viewName) {
+  const nextView = String(viewName || "tutor").trim() || "tutor";
   focusTabs.forEach((tab) => {
     const isActive = tab.dataset.viewTarget === nextView;
     tab.classList.toggle("is-active", isActive);
     tab.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
-  focusViews.forEach((view) => {
-    view.classList.toggle("is-active", view.dataset.view === nextView);
-  });
-  window.localStorage.setItem(activeViewStorageKey, nextView);
 }
 
 function showPlanWorkspace(workspace = "home") {
@@ -683,10 +735,10 @@ function buildEmptyStateMarkup() {
         <p>Choose a prompt below or write your own question.</p>
       </div>
       <div class="starter-prompts">
-        <button class="starter-chip" type="button" data-starter-prompt="Teach me Python loops simply with one example.">Teach me Python loops simply</button>
-        <button class="starter-chip" type="button" data-starter-prompt="Quiz me on this topic with 3 short questions.">Quiz me on this topic</button>
-        <button class="starter-chip" type="button" data-starter-prompt="Continue my roadmap session and keep it focused.">Continue my roadmap session</button>
-        <button class="starter-chip" type="button" data-starter-prompt="Turn this into one short lesson and one small exercise.">Give me one lesson and one exercise</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Teach me Python loops simply">Teach me Python loops simply</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Quiz me on this topic">Quiz me on this topic</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Continue my roadmap session">Continue my roadmap session</button>
+        <button class="starter-chip" type="button" data-starter-prompt="Give me one lesson and one exercise">Give me one lesson and one exercise</button>
       </div>
     </div>
   `;
@@ -2099,7 +2151,7 @@ function renderCurrentRoadmapSummaryCard(roadmap, summary) {
   const title = roadmapDisplayTitle(roadmap);
   const progressText =
     `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
-    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+    `${roadmapProgressPercent(summary.completed_sessions, summary.total_sessions, summary.completion_rate)}% complete`;
   const description = roadmapShortDescription(roadmap, summary);
   const detailsId = "current-roadmap-details";
   return `
@@ -2132,7 +2184,7 @@ function renderCurrentRoadmapDetailsHeader(roadmap, summary) {
   const title = roadmapDisplayTitle(roadmap);
   const progressText =
     `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
-    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+    `${roadmapProgressPercent(summary.completed_sessions, summary.total_sessions, summary.completion_rate)}% complete`;
   return `
     <div class="current-roadmap-detail-bar">
       <div>
@@ -2205,7 +2257,7 @@ function renderRoadmap(roadmapResult) {
   roadmapMode.textContent = `${summary.mode} roadmap`;
   const progressText =
     `${summary.completed_sessions}/${summary.total_sessions} sessions done • ` +
-    `${Math.round((summary.completion_rate || 0) * 100)}% complete`;
+    `${roadmapProgressPercent(summary.completed_sessions, summary.total_sessions, summary.completion_rate)}% complete`;
   if (nextRoadmapSession) {
     roadmapSummary.innerHTML = `
       <div class="roadmap-next-action">
@@ -2551,9 +2603,25 @@ function renderEvaluationSnapshot(snapshot) {
     return;
   }
   const assessmentCount = snapshot.coverage?.assessment_count || 0;
+  const mockTestCount = snapshot.coverage?.mock_test_count || 0;
   const progressEvents = snapshot.coverage?.progress_events || 0;
   const roadmapPresent = Boolean(snapshot.coverage?.roadmap_present);
   const groundingAvailable = Boolean(snapshot.coverage?.grounding_available);
+  const materialCount = snapshot.coverage?.material_count || 0;
+  const tutorSessionCount = snapshot.coverage?.tutor_session_count || 0;
+  const tutorMessageCount = snapshot.coverage?.tutor_message_count || 0;
+  const masteryPercent = Math.round(Number(snapshot.quality?.overall_mastery_score || 0) * 100);
+  const avgAssessment = snapshot.quality?.average_assessment_score;
+  const journey = snapshot.journey || {};
+  const completedSessions = Number(journey.roadmap_completed_sessions ?? snapshot.quality?.completed_sessions ?? 0);
+  const totalSessions = Number(journey.roadmap_total_sessions ?? 0);
+  const completionPercent = roadmapProgressPercent(
+    completedSessions,
+    totalSessions,
+    snapshot.quality?.completion_rate,
+  );
+  const risks = Array.isArray(snapshot.risks) ? snapshot.risks : [];
+  const recommendedActions = Array.isArray(snapshot.recommended_actions) ? snapshot.recommended_actions : [];
   const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
   const nextSteps = [];
 
@@ -2570,34 +2638,44 @@ function renderEvaluationSnapshot(snapshot) {
     nextSteps.push("Finish one study session.");
   }
 
-  const priorityItems = warnings.length ? warnings : nextSteps;
-  if (!assessmentCount && !progressEvents && !roadmapPresent && !groundingAvailable) {
+  const priorityItems = recommendedActions.length ? recommendedActions : warnings.length ? warnings : nextSteps;
+  if (!assessmentCount && !progressEvents && !roadmapPresent && !groundingAvailable && !tutorSessionCount) {
     renderEmptyInsights();
     return;
   }
-  const readinessScore = [assessmentCount > 0, roadmapPresent, groundingAvailable, progressEvents > 0]
+  const readinessScore = [assessmentCount > 0, roadmapPresent, groundingAvailable, progressEvents > 0, tutorSessionCount > 0]
     .filter(Boolean).length;
-  const readinessPercent = Math.round((readinessScore / 4) * 100);
+  const readinessPercent = Math.round((readinessScore / 5) * 100);
+  const progressMetric = roadmapPresent ? completionPercent : masteryPercent || readinessPercent;
+  const progressLabel = roadmapPresent ? "roadmap complete" : masteryPercent ? "mastery" : "learning signal";
+  const keyInsight = journey.behavior_summary
+    || (assessmentCount
+      ? "Assessment results are now strong enough to guide the next study action."
+      : roadmapPresent
+        ? "The learner has a plan, but needs an assessment checkpoint to measure retention."
+        : groundingAvailable
+          ? "Materials are ready; turn them into a mock test to measure exam readiness."
+          : "ArkAI needs one measured learning action to make Insights useful.");
   const snapshotItems = [
     {
-      label: "Diagnostics",
-      value: assessmentCount ? `${assessmentCount}` : "None",
-      detail: assessmentCount ? "Learning level measured" : "Take a quick check",
+      label: "Tutor use",
+      value: tutorSessionCount ? "Active" : "Not started",
+      detail: tutorSessionCount ? `${tutorMessageCount} saved messages` : "Ask one focused question",
+    },
+    {
+      label: "Measured work",
+      value: assessmentCount ? `${assessmentCount}` : "Needed",
+      detail: assessmentCount ? `${Math.round(Number(avgAssessment ?? 0) * 100)}% assessment average` : "Submit a diagnostic or mock test",
     },
     {
       label: "Roadmap",
-      value: roadmapPresent ? "Ready" : "Missing",
-      detail: roadmapPresent ? "Study path is available" : "Create next steps",
+      value: roadmapPresent ? "In progress" : "Missing",
+      detail: roadmapPresent ? `${completedSessions}/${totalSessions} sessions complete` : "Create next steps",
     },
     {
       label: "Materials",
       value: groundingAvailable ? "Ready" : "Missing",
-      detail: groundingAvailable ? "Tutor can use your notes" : "Upload notes when useful",
-    },
-    {
-      label: "Activity",
-      value: progressEvents ? `${progressEvents}` : "None",
-      detail: progressEvents ? "Study updates recorded" : "Finish one session",
+      detail: groundingAvailable ? `${mockTestCount} mock test${mockTestCount === 1 ? "" : "s"}` : "Upload notes when useful",
     },
   ];
 
@@ -2606,15 +2684,20 @@ function renderEvaluationSnapshot(snapshot) {
       <article class="insight-card insight-card-primary">
         <div class="insight-card-head">
           <div>
-            <p class="section-label">Snapshot</p>
-            <h4>Your learning signal</h4>
-            <p>How much ArkAI knows about your current progress.</p>
+            <p class="section-label">Key insight</p>
+            <h4>${escapeHtml(journey.current_topic || journey.roadmap_topic || "Learning signal")}</h4>
+            <p>${escapeHtml(keyInsight)}</p>
           </div>
-          <strong class="insight-score">${readinessPercent}%</strong>
+          <strong class="insight-score">${progressMetric}%</strong>
         </div>
         <div class="insight-meter" aria-hidden="true">
-          <span style="width: ${readinessPercent}%"></span>
+          <span style="width: ${progressMetric}%"></span>
         </div>
+        <p class="state-summary insights-compact-copy">${escapeHtml(progressLabel)}</p>
+      </article>
+      <article class="insight-card">
+        <p class="section-label">Snapshot</p>
+        <h4>What ArkAI knows</h4>
         <div class="insight-status-grid">
           ${snapshotItems.map((item) => `
             <div class="insight-status-item">
@@ -2627,8 +2710,8 @@ function renderEvaluationSnapshot(snapshot) {
       </article>
       <article class="insight-card">
         <p class="section-label">Next focus</p>
-        <h4>${priorityItems.length ? "Do this next" : "Keep going"}</h4>
-        <p class="state-summary insights-compact-copy">${priorityItems.length ? "Highest-impact actions right now." : "Enough signal. Continue your next session."}</p>
+        <h4>${priorityItems.length ? "Next focus" : "Keep going"}</h4>
+        <p class="state-summary insights-compact-copy">${priorityItems.length ? "Highest-impact actions from the current learner data." : "Enough signal. Continue your next session."}</p>
         ${priorityItems.length
       ? `<div class="next-focus-list">${priorityItems.slice(0, 3).map((item, index) => `
               <div class="next-focus-item">
@@ -2637,6 +2720,17 @@ function renderEvaluationSnapshot(snapshot) {
               </div>
             `).join("")}</div>`
       : `<div class="next-focus-list"><div class="next-focus-item"><span>1</span><p>Open your next Tutor session.</p></div></div>`}
+        ${risks.length ? `
+          <p class="section-label insights-risk-label">Risks to act on</p>
+          <div class="next-focus-list">
+            ${risks.slice(0, 2).map((item, index) => `
+              <div class="next-focus-item">
+                <span>${index + 1}</span>
+                <p>${escapeHtml(item)}</p>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
       </article>
     </div>
   `;
@@ -2651,8 +2745,8 @@ function renderInterventionPlan(plan) {
     return;
   }
   const riskLabelMap = {
-    high: "Needs support",
-    medium: "Watch closely",
+    high: "Action needed",
+    medium: "Checkpoint needed",
     low: "On track",
   };
   const riskLabel = riskLabelMap[plan.risk_level] || "Review needed";
@@ -2667,7 +2761,7 @@ function renderInterventionPlan(plan) {
   interventionRisk.textContent = riskLabel;
   interventionSummary.textContent = completedSessions
     ? `Mastery ${masteryPercent}%. ${completedSessions} done. Next: ${recommended}`
-    : "No sessions yet. Start with one focused task....";
+    : "Start with one measured action: a Tutor question, diagnostic, or material mock test.";
   refreshOverview();
 }
 
@@ -2764,10 +2858,11 @@ function getContinueLearningSnapshot() {
 
   const totalSessions = Number(summary.total_sessions || 0);
   const completedSessions = Number(summary.completed_sessions || 0);
-  const completionRate = Number.isFinite(Number(summary.completion_rate))
-    ? Number(summary.completion_rate)
-    : (totalSessions ? completedSessions / totalSessions : 0);
-  const percent = Math.max(0, Math.min(100, Math.round(completionRate * 100)));
+  const percent = roadmapProgressPercent(
+    completedSessions,
+    totalSessions,
+    summary.completion_rate,
+  );
   const nextSession = summary.next_session?.title
     ? summary.next_session
     : findNextRoadmapSession(roadmap);
@@ -3866,7 +3961,7 @@ messages.addEventListener("click", async (event) => {
   if (!starterButton) {
     return;
   }
-  promptInput.value = starterButton.dataset.starterPrompt || "";
+  promptInput.value = starterButton.textContent.replace(/\s+/g, " ").trim() || starterButton.dataset.starterPrompt || "";
   autoresizePrompt();
   promptInput.focus();
   promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
@@ -4212,7 +4307,7 @@ document.querySelectorAll("[data-plan-back]").forEach((button) => {
   });
 });
 
-refreshInsightsButton.addEventListener("click", async () => {
+refreshInsightsButton?.addEventListener("click", async () => {
   setActiveView("insights");
   await refreshInsights();
 });
@@ -4366,13 +4461,18 @@ uploadMaterialButton.addEventListener("click", async () => {
     if (dropZoneTitle) {
       dropZoneTitle.textContent = "Drop file or browse";
     }
+    updateUploadMaterialButtonState();
     await refreshMaterials();
     await refreshInsights();
   } catch (error) {
     materialsStatus.textContent = error.message;
   } finally {
-    uploadMaterialButton.disabled = false;
+    updateUploadMaterialButtonState();
   }
+});
+
+materialFileInput.addEventListener("change", () => {
+  updateUploadMaterialButtonState();
 });
 
 if (askMaterialsButton) {
@@ -4442,12 +4542,12 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
   createMaterialsMockTestButton.disabled = true;
   materialsStatus.textContent = "Creating mock test from your material...";
   try {
-    const sampleStyleFromFile = sampleStyleFile ? await readFileAsText(sampleStyleFile) : "";
+    const sampleStyleFileDataBase64 = sampleStyleFile ? await readFileAsDataUrl(sampleStyleFile) : "";
     const sampleStylePayload = [
       materialsMockStyleInput?.value?.trim() || "",
       sampleStyleFile ? `Uploaded sample exam: ${sampleStyleFile.name}` : "",
-      sampleStyleFromFile.trim(),
     ].filter(Boolean).join("\n\n");
+    const structureText = materialsMockStructureInput.value.trim();
 
     const response = await fetch("/api/materials/mock-test", {
       method: "POST",
@@ -4462,9 +4562,12 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
         topic: materialQueryInput?.value?.trim() || latestMaterials.find((material) => selectedMaterialIds.has(material.material_id))?.name || "Uploaded materials",
         level: diagnosticLevelSelect.value,
         goal: "Practice from uploaded materials",
-        questionCount: 5,
-        structure: materialsMockStructureInput.value.trim(),
+        questionCount: parseMockQuestionCount(structureText, 5),
+        structure: structureText,
         sampleStyle: sampleStylePayload,
+        sampleStyleFileName: sampleStyleFile?.name || "",
+        sampleStyleFileMimeType: sampleStyleFile?.type || "",
+        sampleStyleFileDataBase64,
       }),
     });
     const data = await response.json();
@@ -4483,11 +4586,20 @@ createMaterialsMockTestButton.addEventListener("click", async () => {
     materialsStatus.textContent = "Mock test ready. Download it when you are ready.";
     materialsMockStyleFileInput.value = "";
     setActiveView("plan");
+    setActiveNavigation("materials");
   } catch (error) {
     materialsStatus.textContent = error.message;
   } finally {
     createMaterialsMockTestButton.disabled = false;
   }
+});
+
+materialsMockBackButton?.addEventListener("click", () => {
+  setActiveView("materials");
+  showPlanWorkspace("home");
+  materialsStatus.textContent = activeAssessment?.assessment_type === "mock_test"
+    ? "Mock test is ready. Download it when you are ready."
+    : "Upload notes, then create a mock test.";
 });
 
 downloadMaterialsMockTestButton?.addEventListener("click", () => {
@@ -4938,5 +5050,6 @@ autoresizePrompt();
 await refreshLearnerState();
 await refreshMasteryBoard();
 await refreshRoadmap();
+updateUploadMaterialButtonState();
 await refreshMaterials();
 await refreshInsights();

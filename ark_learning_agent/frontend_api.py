@@ -383,6 +383,81 @@ def _is_google_save_request(message: str) -> bool:
         or _is_google_calendar_save_request(message)
     )
 
+def _is_teaching_request(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    if _is_google_save_request(text):
+        return False
+    return bool(re.search(r"\b(?:teach|lecture|lesson|explain)\b", text))
+
+def _teaching_topic_from_message(message: str) -> str:
+    text = re.sub(r"\s+", " ", str(message or "").strip())
+    explicit = re.search(r"\btopic\s*:\s*(.+?)(?:[?.!,;]*$)", text, flags=re.IGNORECASE)
+    if explicit:
+        return explicit.group(1).strip(" \t\r\n?.!,;:")
+    match = re.search(r"\b(?:teach(?: me)?|lecture(?: on| about)?|lesson(?: on| about)?|explain)\s+(.+?)(?:\s+(?:as|for)\s+(?:a\s+)?(?:beginner|intermediate|advanced)|[?.!,;]*$)", text, flags=re.IGNORECASE)
+    if match:
+        topic = re.sub(r"^(?:me\s+)?(?:a\s+)?", "", match.group(1), flags=re.IGNORECASE).strip(" \t\r\n?.!,;:")
+        topic = re.sub(r"\s+(?:simply|simple|easily|please)$", "", topic, flags=re.IGNORECASE).strip(" \t\r\n?.!,;:")
+        if topic.lower() in {"", "me", "a lecture", "lecture", "lesson", "this", "that"}:
+            return ""
+        return topic
+    return ""
+
+def _teaching_level_from_message(message: str) -> str:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    match = re.search(r"\b(beginner|intermediate|advanced|new to this|newbie)\b", text)
+    return match.group(1) if match else ""
+
+def _teaching_detail_question(topic: str = "") -> str:
+    if topic:
+        return f"What is your current level in {topic}: beginner, intermediate, or advanced?"
+    return "What lecture topic do you want to learn, and what is your current level: beginner, intermediate, or advanced?"
+
+def _is_level_only_teaching_reply(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    return text in {"beginner", "intermediate", "advanced", "new to this", "newbie"}
+
+def _pending_teaching_topic_from_messages(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        role = str(message.get("role", "")).strip().lower()
+        content = _clean_google_save_text(message.get("content", ""))
+        if role in {"assistant", "agent", "model"}:
+            match = re.search(
+                r"^What is your current level in (.+?): beginner, intermediate, or advanced\?",
+                content,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                return match.group(1).strip()
+            if content and not content.startswith("What lecture topic do you want to learn"):
+                return ""
+    return ""
+
+def _resume_pending_teaching_message(topic: str, level: str) -> str:
+    clean_topic = re.sub(r"\s+", " ", str(topic or "").strip(" \t\r\n?.!,;:"))
+    clean_level = re.sub(r"\s+", " ", str(level or "").strip().lower())
+    if clean_level == "newbie":
+        clean_level = "beginner"
+    return (
+        f"Teach me {clean_topic} simply as a {clean_level}. "
+        f"Stay focused on {clean_topic}; do not switch to another subject."
+    )
+
+def _is_google_save_status_message(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip()).lower()
+    if not text:
+        return False
+    return (
+        text.startswith("note saved to google docs")
+        or text.startswith("document: https://docs.google.com/")
+        or "note saved to google docs in folder" in text
+        or "docs.google.com/document/d/" in text
+        or "save notes to google docs" in text and "connect your google account" in text
+        or "google docs saving permissions" in text
+        or "saving function is still showing an authentication requirement" in text
+        or "i won't be able to save this lesson" in text
+    )
+
 def _clean_google_save_text(value: Any) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -406,6 +481,8 @@ def _google_save_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]
         elif role != "user":
             role = "message"
         if role == "user" and _is_google_save_request(content):
+            continue
+        if role == "agent" and _is_google_save_status_message(content):
             continue
         author = "You" if role == "user" else "ArkAI"
         cleaned.append({"role": role, "author": author, "content": content})
@@ -484,6 +561,145 @@ def _strip_google_save_offer(text: str) -> str:
         break
     return "\n".join(lines).strip()
 
+def _title_case_topic(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n?.!,;:")
+    if not text:
+        return ""
+    if re.search(r"[a-z][A-Z]|\d", text):
+        return text
+    return text.title()
+
+def _lecture_topic_from_prompt(prompt: str) -> str:
+    text = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    patterns = (
+        r"\bTopic:\s*([^.;\n]+)",
+        r"\bteach(?: me)?(?: a topic)?(?: about| on)?\s+([^.;\n]+)",
+        r"\bexplain\s+([^.;\n]+)",
+        r"\blearn\s+([^.;\n]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            topic = re.split(r"\b(?:phase goal|give me|within|in \d+|and make|then)\b", match.group(1), flags=re.IGNORECASE)[0]
+            topic = re.sub(r"\s+", " ", topic).strip(" \t\r\n?.!,;:")
+            if topic:
+                return _title_case_topic(topic)
+    return ""
+
+def _lecture_topic_score(prompt: str) -> int:
+    text = re.sub(r"\s+", " ", str(prompt or "").strip()).lower()
+    if not text or _is_google_save_request(text):
+        return 0
+    if re.search(r"\btopic:\s*[^.;\n]+", text):
+        return 4
+    if any(phrase in text for phrase in ("teach me", "explain", "learn", "roadmap session")):
+        return 3
+    if any(phrase in text for phrase in ("lecture more", "more lecture", "continue", "dive deeper")):
+        return 1
+    return 2
+
+def _lecture_topic_from_messages(messages: list[dict[str, str]]) -> str:
+    best_topic = ""
+    best_score = 0
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        topic = _lecture_topic_from_prompt(content)
+        score = _lecture_topic_score(content)
+        if topic and score > best_score:
+            best_topic = topic
+            best_score = score
+    return best_topic
+
+def _looks_like_interactive_lecture_section(line: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(line or "").strip()).lower().rstrip(":")
+    return normalized in {
+        "your turn",
+        "small exercise",
+        "exercise",
+        "practice",
+        "quick check",
+        "quick question",
+        "try it",
+    }
+
+def _looks_like_chatty_lecture_line(line: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(line or "").strip()).lower()
+    if not normalized:
+        return False
+    return (
+        normalized.startswith(("great!", "nice!", "good job", "let's start", "lets start"))
+        or normalized.startswith("absolutely!")
+        or "let's quickly go over the exercise" in normalized
+        or normalized.startswith(("take a moment", "can you think", "would you like", "do you want"))
+    )
+
+def _clean_tutor_response_for_lecture_notes(text: str) -> str:
+    source = _strip_google_save_offer(text)
+    paragraphs = re.split(r"\n\s*\n", source)
+    kept: list[str] = []
+    skip_interactive = False
+    skip_exercise_feedback = False
+
+    for paragraph in paragraphs:
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        first_line = lines[0]
+        first_normalized = re.sub(r"\s+", " ", first_line).lower()
+        if _is_google_save_status_message("\n".join(lines)):
+            continue
+        if _looks_like_interactive_lecture_section(first_line):
+            skip_interactive = True
+            continue
+        if skip_interactive:
+            # Resume only when a later paragraph looks like a content heading.
+            if first_line.endswith(":") and not _looks_like_interactive_lecture_section(first_line):
+                skip_interactive = False
+            else:
+                continue
+        if skip_exercise_feedback:
+            if first_normalized.startswith(("key concept", "what is ", "definition", "example:")):
+                skip_exercise_feedback = False
+            else:
+                continue
+        if _looks_like_chatty_lecture_line(first_line):
+            if "exercise" in first_normalized:
+                skip_exercise_feedback = True
+            if len(lines) == 1:
+                continue
+            lines = lines[1:]
+        if not lines:
+            continue
+
+        paragraph_text = "\n".join(lines).strip()
+        if paragraph_text:
+            kept.append(paragraph_text)
+
+    return "\n\n".join(kept).strip()
+
+def _format_chat_messages_as_lecture_notes(messages: list[dict[str, str]]) -> str:
+    lecture_sections: list[str] = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role != "agent":
+            continue
+        cleaned = _clean_tutor_response_for_lecture_notes(content)
+        if cleaned:
+            lecture_sections.append(cleaned)
+
+    if not lecture_sections:
+        return ""
+
+    topic = _lecture_topic_from_messages(messages)
+    title = f"ArkAI Lecture Notes{f': {topic}' if topic else ''}"
+    lines = [title, ""]
+    lines.extend(lecture_sections)
+    return "\n\n".join(lines).strip()
+
 def _chat_doc_title(messages: list[dict[str, Any]]) -> str:
     for message in messages:
         if str(message.get("role", "")).lower() == "user":
@@ -499,8 +715,11 @@ def _format_chat_messages_for_google_doc(messages: list[dict[str, Any]]) -> str:
         return "No tutor content was available to save yet."
 
     prompt, answer, earlier_messages = _latest_google_save_exchange(cleaned_messages)
+    lecture_notes = _format_chat_messages_as_lecture_notes(cleaned_messages)
+    if lecture_notes:
+        return lecture_notes
     if answer:
-        return _strip_google_save_offer(answer) or answer
+        return _clean_tutor_response_for_lecture_notes(answer) or _strip_google_save_offer(answer) or answer
 
     return prompt or "No tutor response was found in this chat yet."
 
@@ -591,11 +810,21 @@ async def _save_tutor_chat_to_google_doc(
     payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
     if payload.get("status") != "success":
         return payload
-    return await asyncio.to_thread(save_google_doc_note,
-        user_id=user_id,
-        title=payload["title"],
-        note_text=payload["note_text"],
-    )
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                save_google_doc_note,
+                user_id=user_id,
+                title=payload["title"],
+                note_text=payload["note_text"],
+            ),
+            timeout=35,
+        )
+    except TimeoutError:
+        return {
+            "status": "timeout",
+            "message": "Google Docs took too long to respond. Please try saving again in a moment.",
+        }
 
 
 async def _save_tutor_chat_to_google_drive(
@@ -620,16 +849,28 @@ async def _save_tutor_chat_to_google_task(
     session_id: str,
     client_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    from .productivity_mcp_server import create_study_task
+    from .productivity_mcp_server import create_roadmap_tasks, google_oauth_status
 
-    payload = await _get_tutor_chat_save_payload(user_id, session_id, client_messages=client_messages)
-    if payload.get("status") != "success":
-        return payload
-    return await asyncio.to_thread(create_study_task,
-        user_id=user_id,
-        task_title=f"Review {payload['title']}",
-        notes=payload["task_notes"],
-    )
+    roadmap_result = await asyncio.to_thread(get_roadmap, user_id)
+    if roadmap_result.get("status") != "success":
+        return {
+            "status": "needs_roadmap",
+            "message": "Create or save a roadmap first. Google Tasks should be created from roadmap study sessions, not the lecture text.",
+        }
+    roadmap = roadmap_result.get("roadmap") or {}
+    if not str(roadmap.get("start_date") or "").strip():
+        return {
+            "status": "needs_time",
+            "message": "Before I create Google Tasks, what date should the roadmap start?",
+        }
+
+    oauth_status = await asyncio.to_thread(google_oauth_status, user_id)
+    if not oauth_status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": "Google saves is not connected for this signed-in ArkAI account.",
+        }
+    return await asyncio.to_thread(create_roadmap_tasks, user_id=user_id, include_due_dates=True)
 
 def _calendar_window_from_message(message: str, timezone_name: str = "") -> tuple[str, str] | None:
     start = _calendar_start_from_message(message, timezone_name)
@@ -671,7 +912,9 @@ def _calendar_start_from_message(message: str, timezone_name: str = "") -> datet
             days_ahead = days_ahead or 7
         event_date = (now + timedelta(days=days_ahead)).date()
 
-    time_match = re.search(r"(?<![-\d])(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?![-\d])", text)
+    time_match = re.search(r"(?<![-\d])(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?![-\d])", text)
+    if not time_match:
+        time_match = re.search(r"\bat\s+(\d{1,2})(?::(\d{2}))?\b", text)
     if not time_match:
         return None
     hour = int(time_match.group(1))
@@ -685,6 +928,22 @@ def _calendar_start_from_message(message: str, timezone_name: str = "") -> datet
         return None
 
     return datetime(event_date.year, event_date.month, event_date.day, hour, minute, tzinfo=tz)
+
+def _calendar_start_from_roadmap(roadmap: dict[str, Any], timezone_name: str = "") -> datetime | None:
+    start_date = str((roadmap or {}).get("start_date") or "").strip()
+    start_clock = str((roadmap or {}).get("preferred_calendar_time") or "").strip()
+    if not start_date or not start_clock:
+        return None
+    try:
+        tz = zoneinfo.ZoneInfo(timezone_name or "Asia/Bangkok")
+    except zoneinfo.ZoneInfoNotFoundError:
+        tz = zoneinfo.ZoneInfo("Asia/Bangkok")
+    try:
+        day = datetime.fromisoformat(start_date).date()
+        clock = _parse_calendar_start_time(start_clock)
+    except ValueError:
+        return None
+    return datetime.combine(day, clock, tzinfo=tz)
 
 def _requested_session_count(message: str, default: int) -> int:
     text = str(message or "").strip().lower()
@@ -712,8 +971,397 @@ def _is_roadmap_calendar_request(message: str) -> bool:
     text = str(message or "").strip().lower()
     return _is_google_calendar_save_request(text) and any(
         phrase in text
-        for phrase in ("roadmap", "study session", "study sessions", "sessions", "session plan")
+        for phrase in (
+            "roadmap",
+            "study session",
+            "study sessions",
+            "sessions",
+            "session plan",
+            "this",
+            "google calendar",
+            "google calender",
+            "calendar",
+            "calender",
+            "gcal",
+        )
     )
+
+def _is_tutor_roadmap_request(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    if not text:
+        return False
+    if any(phrase in text for phrase in ("google docs", "google doc", "google drive", "google tasks", "google calendar", "google calender", "calendar", "calender", "gcal")):
+        return False
+    return (
+        "roadmap" in text
+        and any(
+            phrase in text
+            for phrase in (
+                "create",
+                "make",
+                "build",
+                "generate",
+                "save to",
+                "add to",
+                "save it",
+                "save this",
+                "save the",
+            )
+        )
+    )
+
+def _is_google_connect_acknowledgement(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    return bool(
+        re.search(r"\b(?:already did|i'?m connected|i am connected|connected now|ok(?:ay)? i'?m connected|done)\b", text)
+        and any(word in text for word in ("connect", "connected", "did", "done"))
+    )
+
+def _parse_roadmap_deadline_days(message: str) -> int:
+    text = str(message or "").strip().lower()
+    match = re.search(r"\b(\d{1,2})\s*[- ]?\s*(?:day|days)\b", text)
+    if match:
+        return max(1, min(60, int(match.group(1))))
+    match = re.search(r"\b(\d{1,2})\s*[- ]?\s*(?:week|weeks)\b", text)
+    if match:
+        return max(1, min(60, int(match.group(1)) * 7))
+    if "one week" in text or "a week" in text:
+        return 7
+    if re.search(r"\b(?:a|one)\s+month\b", text) or "whole month" in text or "whold month" in text:
+        return 30
+    return 14
+
+def _has_roadmap_deadline_phrase(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    return bool(
+        re.search(r"\b\d{1,2}\s*[- ]?\s*(?:day|days|week|weeks)\b", text)
+        or "one week" in text
+        or "a week" in text
+        or re.search(r"\b(?:a|one)\s+month\b", text)
+        or "whole month" in text
+        or "whold month" in text
+    )
+
+def _parse_study_minutes(message: str) -> int | None:
+    text = str(message or "").strip().lower()
+    hour_match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b", text)
+    if hour_match:
+        return max(15, min(240, int(float(hour_match.group(1)) * 60)))
+    range_match = re.search(
+        r"\b(?:from|at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:to|till|until|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+        text,
+    )
+    if range_match:
+        start_hour = int(range_match.group(1))
+        start_minute = int(range_match.group(2) or 0)
+        start_suffix = range_match.group(3)
+        end_hour = int(range_match.group(4))
+        end_minute = int(range_match.group(5) or 0)
+        end_suffix = range_match.group(6)
+        if start_suffix == "pm" and start_hour < 12:
+            start_hour += 12
+        if start_suffix == "am" and start_hour == 12:
+            start_hour = 0
+        if end_suffix == "pm" and end_hour < 12:
+            end_hour += 12
+        if end_suffix == "am" and end_hour == 12:
+            end_hour = 0
+        duration = (end_hour * 60 + end_minute) - (start_hour * 60 + start_minute)
+        if duration <= 0:
+            duration += 24 * 60
+        return max(15, min(240, duration))
+    minute_match = re.search(r"\b(\d{1,3})\s*(?:m|min|mins|minute|minutes)\b", text)
+    if minute_match:
+        return max(15, min(240, int(minute_match.group(1))))
+    return None
+
+def _parse_calendar_clock_from_message(message: str) -> str:
+    text = str(message or "").strip().lower()
+    match = re.search(r"(?<![-\d])(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?![-\d])", text)
+    if not match:
+        return ""
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    suffix = match.group(3)
+    if suffix == "pm" and hour < 12:
+        hour += 12
+    if suffix == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return ""
+    return f"{hour:02d}:{minute:02d}"
+
+def _parse_roadmap_topic_from_message(message: str) -> str:
+    text = re.sub(r"\s+", " ", str(message or "").strip())
+    explicit_match = re.search(r"\btopic\s*:\s*(.+?)(?:\s+(?:starting|start|for \d|in \d|at \d)|[?.!,;]*$)", text, flags=re.IGNORECASE)
+    if explicit_match:
+        explicit_topic = re.sub(r"\s+", " ", explicit_match.group(1)).strip(" \t\r\n?.!,;:")
+        if explicit_topic:
+            return explicit_topic
+
+    learn_match = re.search(r"\b(?:to\s+)?(?:learn|learning|leaning)\s+([^?.!,;]+?)(?:\s+(?:starting|start|for \d|in \d|at \d)|\s+please|[?.!,;]|$)", text, flags=re.IGNORECASE)
+    if learn_match:
+        topic = re.sub(r"\s+", " ", learn_match.group(1)).strip(" \t\r\n?.!,;:")
+        if topic:
+            return topic
+    if _is_roadmap_schedule_detail_reply(text):
+        topic = re.split(
+            r"\b(?:i\s+wanna|i\s+want|start|starting|tomorrow|today|for\s+\d|in\s+\d|at\s+\d|from\s+\d|prefer|study)\b",
+            text,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        topic = re.sub(r"^(?:topic\s*:|learn\s+|about\s+|on\s+)", "", topic, flags=re.IGNORECASE)
+        topic = re.sub(r"\s+", " ", topic).strip(" \t\r\n?.!,;:")
+        if topic and not _is_vague_roadmap_topic(topic):
+            return topic
+    return ""
+
+def _is_vague_roadmap_topic(topic: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(topic or "").strip().lower())
+    return normalized in {
+        "me",
+        "myself",
+        "my",
+        "my roadmap",
+        "the roadmap",
+        "a roadmap",
+        "for me",
+        "please",
+    } or normalized.startswith(("me for ", "myself for ", "for me for ")) or bool(
+        re.fullmatch(r"\d+\s*(?:day|days|week|weeks|month|months)", normalized)
+    )
+
+def _roadmap_detail_question(topic: str = "") -> str:
+    if str(topic or "").strip():
+        return (
+            f"Got it: {topic}. What date would you like to start, how many days should the roadmap cover, "
+            "what time do you prefer, and how long do you want to study each session?"
+        )
+    return (
+        "Sure. What topic should the roadmap cover, what date would you like to start, "
+        "how many days should the roadmap cover, what time do you prefer, "
+        "and how long do you want to study each session?"
+    )
+
+def _has_roadmap_schedule_details(message: str) -> bool:
+    return bool(
+        _parse_study_minutes(message)
+        and _parse_calendar_clock_from_message(message)
+        and _has_roadmap_deadline_phrase(message)
+        and _calendar_start_from_message(message, "Asia/Bangkok")
+    )
+
+def _is_roadmap_schedule_detail_reply(message: str) -> bool:
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    if not text:
+        return False
+    return bool(
+        _parse_study_minutes(text)
+        or _parse_calendar_clock_from_message(text)
+        or re.search(r"\b(?:tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})\b", text)
+        or re.search(r"\b\d{1,2}\s*[- ]?\s*(?:day|days|week|weeks)\b", text)
+    )
+
+def _pending_roadmap_topic_from_messages(messages: list[dict[str, Any]]) -> str:
+    saw_generic_question = False
+    for message in reversed(messages):
+        role = str(message.get("role", "")).strip().lower()
+        content = _clean_google_save_text(message.get("content", ""))
+        if role in {"assistant", "agent", "model"}:
+            match = re.search(
+                r"^Got it:\s*(.+?)\.\s*What date would you like to start",
+                content,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                topic = match.group(1).strip(" \t\r\n?.!,;:")
+                return "" if _is_vague_roadmap_topic(topic) else topic
+            if content and not content.startswith("Sure. What topic should the roadmap cover"):
+                return ""
+            if content.startswith("Sure. What topic should the roadmap cover"):
+                saw_generic_question = True
+                continue
+        elif saw_generic_question and role == "user":
+            topic = _parse_roadmap_topic_from_message(content)
+            if topic and not _is_vague_roadmap_topic(topic):
+                return topic
+    return ""
+
+def _has_pending_roadmap_detail_question(messages: list[dict[str, Any]]) -> bool:
+    for message in reversed(messages):
+        role = str(message.get("role", "")).strip().lower()
+        content = _clean_google_save_text(message.get("content", ""))
+        if role in {"assistant", "agent", "model"}:
+            return content.startswith("Sure. What topic should the roadmap cover") or bool(
+                re.match(r"^Got it:\s*.+?\.\s*What date would you like to start", content, flags=re.IGNORECASE | re.DOTALL)
+            )
+    return False
+
+def _resume_pending_roadmap_message(topic: str, details: str) -> str:
+    clean_topic = re.sub(r"\s+", " ", str(topic or "").strip(" \t\r\n?.!,;:"))
+    clean_details = re.sub(r"\s+", " ", str(details or "").strip())
+    return f"Create a roadmap to learn {clean_topic}. {clean_details}"
+
+def _pending_roadmap_detail_text(messages: list[dict[str, Any]], current_message: str) -> str:
+    detail_parts: list[str] = []
+    for message in reversed(messages):
+        role = str(message.get("role", "")).strip().lower()
+        content = _clean_google_save_text(message.get("content", ""))
+        if role in {"assistant", "agent", "model"} and (
+            content.startswith("Sure. What topic should the roadmap cover")
+            or re.match(r"^Got it:\s*.+?\.\s*What date would you like to start", content, flags=re.IGNORECASE | re.DOTALL)
+        ):
+            continue
+        if role in {"assistant", "agent", "model"}:
+            break
+        if role == "user" and _is_roadmap_schedule_detail_reply(content):
+            detail_parts.append(content)
+    detail_parts.reverse()
+    current = _clean_google_save_text(current_message)
+    if current and (not detail_parts or detail_parts[-1] != current):
+        detail_parts.append(current)
+    return " ".join(detail_parts).strip()
+
+def _calendar_start_from_recent_messages(
+    messages: list[dict[str, Any]] | None,
+    timezone_name: str = "",
+) -> datetime | None:
+    for message in reversed(messages or []):
+        if str(message.get("role", "")).strip().lower() != "user":
+            continue
+        start = _calendar_start_from_message(str(message.get("content") or ""), timezone_name)
+        if start:
+            return start
+    return None
+
+def _format_roadmap_saved_reply(result: dict[str, Any], *, has_clock: bool, has_start_date: bool) -> str:
+    roadmap = result.get("roadmap") or {}
+    summary = result.get("summary") or {}
+    topic = str(roadmap.get("topic") or "your topic").strip()
+    duration = int(roadmap.get("available_time") or 45)
+    days = int(roadmap.get("deadline_days") or 14)
+    session_count = int(summary.get("total_sessions") or 0)
+    clock = str(roadmap.get("preferred_calendar_time") or "").strip()
+    lines = [
+        f"Saved your {days}-day {topic} roadmap to Plan.",
+        f"It has {session_count} study session{'s' if session_count != 1 else ''}, set to {duration} minutes each.",
+    ]
+    sessions = []
+    for phase in roadmap.get("phases", []):
+        for session in phase.get("sessions", []):
+            sessions.append(str(session.get("title") or "").strip())
+    if sessions:
+        lines.extend(["", "Plan sessions:"])
+        lines.extend(f"- {title}" for title in sessions[:7] if title)
+    if clock and not has_start_date:
+        lines.append("")
+        lines.append(
+            f"I noted your preferred time as {clock}. What date should the first session start if you want me to add these to Google Calendar? I will schedule one session per day unless you prefer specific days."
+        )
+    elif not has_clock:
+        lines.append("")
+        lines.append("If you want calendar events too, tell me the start date and time, for example: start tomorrow at 9am.")
+    return "\n".join(lines)
+
+async def _handle_google_connected_acknowledgement(user_id: str) -> dict[str, Any]:
+    from .productivity_mcp_server import google_oauth_status
+
+    status = await asyncio.to_thread(google_oauth_status, user_id)
+    roadmap_result = await asyncio.to_thread(get_roadmap, user_id)
+    roadmap = roadmap_result.get("roadmap") if roadmap_result.get("status") == "success" else {}
+    clock = str((roadmap or {}).get("preferred_calendar_time") or "").strip()
+    start_date = str((roadmap or {}).get("start_date") or "").strip()
+    topic = str((roadmap or {}).get("topic") or "your roadmap").strip()
+
+    if not status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": (
+                "I checked the server, and Google saves is still not connected for this ArkAI account. "
+                "Open the account menu, press Connect under Google saves, finish the Google permission window, then try again."
+            ),
+        }
+
+    if roadmap and clock and not start_date:
+        return {
+            "status": "needs_time",
+            "message": (
+                f"Google saves is connected now. For your {topic} roadmap, I have the time as {clock}. "
+                "What date should the first session start? I will schedule one session per day unless you prefer specific days."
+            ),
+        }
+
+    if roadmap and not clock:
+        return {
+            "status": "needs_time",
+            "message": (
+                f"Google saves is connected now. For your {topic} roadmap, what start date and time should I use for Calendar sessions?"
+            ),
+        }
+
+    return {
+        "status": "success",
+        "message": "Google saves is connected now. Tell me what you want to save or schedule next.",
+    }
+
+async def _handle_tutor_roadmap_request(user_id: str, message: str, timezone_name: str = "") -> dict[str, Any]:
+    topic = _parse_roadmap_topic_from_message(message)
+    if _is_vague_roadmap_topic(topic):
+        topic = ""
+    existing = await asyncio.to_thread(get_roadmap, user_id)
+    existing_roadmap = existing.get("roadmap") if existing.get("status") == "success" else {}
+    is_update_request = bool(
+        re.search(r"\b(?:update|change|set|save to|add to|save it|save this|save the)\b", str(message or ""), flags=re.IGNORECASE)
+    )
+    if not topic and is_update_request:
+        topic = str((existing_roadmap or {}).get("topic") or "").strip()
+    if not topic:
+        return {
+            "status": "needs_topic",
+            "message": _roadmap_detail_question(),
+        }
+    if not is_update_request and not _has_roadmap_schedule_details(message):
+        return {
+            "status": "needs_details",
+            "message": _roadmap_detail_question(topic),
+        }
+
+    minutes = _parse_study_minutes(message)
+    if minutes is None:
+        minutes = int((existing_roadmap or {}).get("available_time") or 45)
+    deadline_days = _parse_roadmap_deadline_days(message)
+    if deadline_days == 14 and existing_roadmap:
+        deadline_days = int(existing_roadmap.get("deadline_days") or 14)
+    clock = _parse_calendar_clock_from_message(message) or str((existing_roadmap or {}).get("preferred_calendar_time") or "")
+    start_at = _calendar_start_from_message(message, timezone_name or "Asia/Bangkok")
+    start_date = start_at.date().isoformat() if start_at else str((existing_roadmap or {}).get("start_date") or "")
+
+    result = await asyncio.to_thread(
+        build_or_update_roadmap,
+        user_id=user_id,
+        topic=topic,
+        goal=f"Learn {topic}",
+        level=str((existing_roadmap or {}).get("level") or "beginner"),
+        available_time=minutes,
+        deadline_days=deadline_days,
+        start_date=start_date,
+        preferred_calendar_time=clock,
+        force_rebuild=True,
+        revision_reason="saved from Tutor chat",
+    )
+    if result.get("status") != "success":
+        return result
+    return {
+        "status": "success",
+        "message": _format_roadmap_saved_reply(
+            result,
+            has_clock=bool(clock),
+            has_start_date=bool(start_date),
+        ),
+        "roadmap": result.get("roadmap"),
+        "summary": result.get("summary"),
+    }
 
 async def _save_tutor_chat_to_google_calendar(
     user_id: str,
@@ -742,21 +1390,13 @@ async def _save_tutor_chat_to_google_calendar(
         description=payload["calendar_description"],
     )
 
-async def _save_roadmap_sessions_to_google_calendar(user_id: str, message: str, timezone_name: str) -> dict[str, Any]:
+async def _save_roadmap_sessions_to_google_calendar(
+    user_id: str,
+    message: str,
+    timezone_name: str,
+    client_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     from .productivity_mcp_server import create_calendar_event, google_oauth_status
-
-    oauth_status = await asyncio.to_thread(google_oauth_status, user_id)
-    if not oauth_status.get("connected"):
-        return {
-            "status": "auth_required",
-            "message": "Google saves is not connected for this signed-in ArkAI account.",
-        }
-    start_at = _calendar_start_from_message(message, timezone_name)
-    if not start_at:
-        return {
-            "status": "needs_time",
-            "message": "Tell me when to start the calendar schedule, for example: add 5 study sessions to Google Calendar tomorrow at 9am.",
-        }
 
     roadmap_result = await asyncio.to_thread(get_roadmap, user_id)
     if roadmap_result.get("status") != "success":
@@ -765,8 +1405,30 @@ async def _save_roadmap_sessions_to_google_calendar(user_id: str, message: str, 
             "message": roadmap_result.get("message") or "No active roadmap was found.",
         }
 
+    roadmap = roadmap_result.get("roadmap") or {}
+    start_at = (
+        _calendar_start_from_message(message, timezone_name)
+        or _calendar_start_from_roadmap(roadmap, timezone_name)
+        or _calendar_start_from_recent_messages(client_messages, timezone_name)
+    )
+    if not start_at:
+        return {
+            "status": "needs_time",
+            "message": (
+                "What date should the first roadmap session start, what time do you prefer, and how long should each session be? "
+                "For example: start tomorrow at 9am every day for 2 hours."
+            ),
+        }
+
+    oauth_status = await asyncio.to_thread(google_oauth_status, user_id)
+    if not oauth_status.get("connected"):
+        return {
+            "status": "auth_required",
+            "message": "Google saves is not connected for this signed-in ArkAI account.",
+        }
+
     sessions: list[dict[str, Any]] = []
-    for phase in roadmap_result.get("roadmap", {}).get("phases", []):
+    for phase in roadmap.get("phases", []):
         for session in phase.get("sessions", []):
             if session.get("status") == "completed":
                 continue
@@ -1400,7 +2062,51 @@ async def api_evaluation(request: Request, response: Response):
         context = await _resolve_request_context(request, response)
     except PermissionError as exc:
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={"error": str(exc)})
-    return await asyncio.to_thread(get_evaluation_snapshot, context["user_id"])
+    result = await asyncio.to_thread(get_evaluation_snapshot, context["user_id"])
+    if result.get("status") != "success":
+        return result
+
+    sessions_result = await asyncio.to_thread(list_chat_sessions, context["user_id"], 30)
+    sessions = sessions_result.get("sessions", []) if sessions_result.get("status") == "success" else []
+    tutor_session_count = len(sessions)
+    tutor_message_count = sum(int(session.get("message_count") or 0) for session in sessions)
+    coverage = result.setdefault("coverage", {})
+    coverage["tutor_session_count"] = tutor_session_count
+    coverage["tutor_message_count"] = tutor_message_count
+    journey = result.setdefault("journey", {})
+    journey["tutor_sessions"] = [
+        {
+            "title": session.get("title", ""),
+            "message_count": session.get("message_count", 0),
+            "last_message_at": session.get("last_message_at", ""),
+        }
+        for session in sessions[:5]
+    ]
+
+    strengths = result.setdefault("strengths", [])
+    risks = result.setdefault("risks", [])
+    recommendations = result.setdefault("recommended_actions", [])
+    if tutor_session_count:
+        strengths.append(f"Used Tutor across {tutor_session_count} saved session(s).")
+    else:
+        risks.append("No saved Tutor session yet, so learning behavior is still hard to infer.")
+        recommendations.append("Ask Tutor one focused question before the next plan update.")
+
+    if tutor_session_count and coverage.get("assessment_count", 0) == 0:
+        risks.append("Tutor activity exists, but no submitted assessment confirms retention yet.")
+    if tutor_session_count and coverage.get("roadmap_present"):
+        journey["behavior_summary"] = "The learner is combining Tutor help with a structured roadmap."
+    elif tutor_session_count:
+        journey["behavior_summary"] = "The learner is using Tutor first; the next step is to turn that work into a measured plan."
+    elif coverage.get("roadmap_present"):
+        journey["behavior_summary"] = "The learner has a plan, but Tutor activity is not yet visible."
+    else:
+        journey["behavior_summary"] = "ArkAI has only early signals so far."
+
+    result["strengths"] = strengths[:5]
+    result["risks"] = risks[:5]
+    result["recommended_actions"] = recommendations[:5]
+    return result
 
 @api_router.get("/api/google/status")
 async def api_google_status(request: Request, response: Response):
@@ -1635,6 +2341,7 @@ async def api_roadmap_generate(request: Request, response: Response, payload: Ro
         available_time=payload.availableTime,
         deadline_days=payload.deadlineDays or 14,
         start_date=str(payload.startDate or "").strip(),
+        preferred_calendar_time=str(payload.calendarStartTime or "").strip(),
         force_rebuild=bool(payload.forceRebuild),
         revision_reason=str(payload.revisionReason or "").strip(),
     )
@@ -1754,6 +2461,28 @@ async def api_materials_tutor(request: Request, response: Response, payload: Mat
 @api_router.post("/api/materials/mock-test")
 async def api_materials_mock_test(request: Request, response: Response, payload: MaterialsMockTestRequest):
     context = await _resolve_context(request, response, payload)
+    sample_style_parts = [str(payload.sampleStyle or "").strip()]
+    sample_file_data = str(payload.sampleStyleFileDataBase64 or "").strip()
+    if sample_file_data:
+        sample_file_name = str(payload.sampleStyleFileName or "sample-exam").strip() or "sample-exam"
+        sample_file_mime = str(payload.sampleStyleFileMimeType or "").strip()
+        try:
+            sample_blob = _decode_base64(sample_file_data)
+            sample_text = _extract_text_from_payload(
+                sample_file_name,
+                sample_file_mime,
+                sample_blob,
+                "",
+            ).strip()
+        except Exception:
+            sample_text = ""
+        if sample_text:
+            sample_style_parts.append(f"Uploaded sample exam: {sample_file_name}\n\n{sample_text}")
+        else:
+            sample_style_parts.append(
+                f"Uploaded sample exam: {sample_file_name}\n\n"
+                "The sample file could not be read as text. Infer only from the explicit structure."
+            )
     result = await asyncio.to_thread(create_mock_test_from_materials, 
         user_id=context["user_id"],
         material_ids=[str(item) for item in (payload.materialIds or []) if str(item).strip()],
@@ -1762,7 +2491,7 @@ async def api_materials_mock_test(request: Request, response: Response, payload:
         goal=str(payload.goal or "").strip(),
         question_count=payload.questionCount or 5,
         structure=str(payload.structure or "").strip(),
-        sample_style=str(payload.sampleStyle or "").strip(),
+        sample_style="\n\n".join(part for part in sample_style_parts if part),
     )
     if result.get("status") != "success":
         response.status_code = HTTPStatus.BAD_REQUEST
@@ -1896,6 +2625,122 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
                 "temporary_attachments": temporary_attachment_metadata,
             },
         )
+        pending_teaching_topic = ""
+        if _is_level_only_teaching_reply(message):
+            history_result = await asyncio.to_thread(get_chat_messages, user_id, session_id=session_id)
+            if history_result.get("status") == "success":
+                pending_teaching_topic = _pending_teaching_topic_from_messages(
+                    history_result.get("messages") or []
+                )
+            if pending_teaching_topic:
+                agent_message = _resume_pending_teaching_message(
+                    pending_teaching_topic,
+                    _teaching_level_from_message(message) or message,
+                )
+        if not pending_teaching_topic and _is_roadmap_schedule_detail_reply(message):
+            history_result = await asyncio.to_thread(get_chat_messages, user_id, session_id=session_id)
+            pending_roadmap_topic = ""
+            has_pending_roadmap_question = False
+            roadmap_detail_text = message
+            if history_result.get("status") == "success":
+                history_messages = history_result.get("messages") or []
+                pending_roadmap_topic = _pending_roadmap_topic_from_messages(
+                    history_messages
+                )
+                has_pending_roadmap_question = _has_pending_roadmap_detail_question(history_messages)
+                roadmap_detail_text = _pending_roadmap_detail_text(history_messages, message)
+            if not pending_roadmap_topic and has_pending_roadmap_question:
+                pending_roadmap_topic = _parse_roadmap_topic_from_message(roadmap_detail_text)
+            if pending_roadmap_topic:
+                roadmap_result = await _handle_tutor_roadmap_request(
+                    user_id=user_id,
+                    message=_resume_pending_roadmap_message(pending_roadmap_topic, roadmap_detail_text),
+                    timezone_name=user_timezone,
+                )
+                reply = roadmap_result.get("message") or "Saved this roadmap to Plan."
+                await asyncio.to_thread(append_chat_message, 
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="assistant",
+                    author="ARKAI",
+                    content=reply,
+                )
+                return {
+                    "reply": reply,
+                    "roadmap": roadmap_result.get("roadmap"),
+                    "summary": roadmap_result.get("summary"),
+                    "session": {
+                        "userId": context["user_id"],
+                        "sessionId": context["session_id"],
+                        "displayName": context["display_name"],
+                        "isAnonymous": context["is_anonymous"],
+                    },
+                }
+        if _is_teaching_request(message):
+            teaching_topic = _teaching_topic_from_message(message)
+            teaching_level = _teaching_level_from_message(message)
+            if not teaching_topic or not teaching_level:
+                reply = _teaching_detail_question(teaching_topic)
+                await asyncio.to_thread(append_chat_message, 
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="assistant",
+                    author="ARKAI",
+                    content=reply,
+                )
+                return {
+                    "reply": reply,
+                    "session": {
+                        "userId": context["user_id"],
+                        "sessionId": context["session_id"],
+                        "displayName": context["display_name"],
+                        "isAnonymous": context["is_anonymous"],
+                    },
+                }
+        if _is_google_connect_acknowledgement(message):
+            connect_result = await _handle_google_connected_acknowledgement(user_id)
+            reply = connect_result.get("message") or "I checked your Google saves connection."
+            await asyncio.to_thread(append_chat_message, 
+                user_id=user_id,
+                session_id=session_id,
+                role="assistant",
+                author="ARKAI",
+                content=reply,
+            )
+            return {
+                "reply": reply,
+                "session": {
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            }
+        if _is_tutor_roadmap_request(message):
+            roadmap_result = await _handle_tutor_roadmap_request(
+                user_id=user_id,
+                message=message,
+                timezone_name=user_timezone,
+            )
+            reply = roadmap_result.get("message") or "Saved this roadmap to Plan."
+            await asyncio.to_thread(append_chat_message, 
+                user_id=user_id,
+                session_id=session_id,
+                role="assistant",
+                author="ARKAI",
+                content=reply,
+            )
+            return {
+                "reply": reply,
+                "roadmap": roadmap_result.get("roadmap"),
+                "summary": roadmap_result.get("summary"),
+                "session": {
+                    "userId": context["user_id"],
+                    "sessionId": context["session_id"],
+                    "displayName": context["display_name"],
+                    "isAnonymous": context["is_anonymous"],
+                },
+            }
         if _is_google_save_request(message):
             client_messages = payload.clientMessages or []
             try:
@@ -1917,6 +2762,7 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
                             user_id=user_id,
                             message=message,
                             timezone_name=user_timezone,
+                            client_messages=client_messages,
                         )
                     else:
                         save_result = await _save_tutor_chat_to_google_calendar(
@@ -1960,6 +2806,8 @@ async def api_chat(request: Request, response: Response, payload: ChatRequest):
                         "Google saves is still not connected for the signed-in ArkAI account I can verify. "
                         "Open the account menu, connect Google saves again, then retry."
                     )
+            elif save_result.get("status") == "timeout":
+                reply = save_result.get("message") or "Google took too long to respond. Please try again in a moment."
             else:
                 reply = f"I could not complete that Google save: {save_result.get('message') or 'unknown error'}"
             await asyncio.to_thread(append_chat_message, 

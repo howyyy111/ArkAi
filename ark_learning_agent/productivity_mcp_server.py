@@ -6,10 +6,13 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import socket
 from typing import Any
 import zoneinfo
 from mcp.server.fastmcp import FastMCP
 
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow, InstalledAppFlow
@@ -74,6 +77,7 @@ SCOPES = [
 
 # Google matches redirect_uri byte-for-byte on both authorize and token steps.
 DEFAULT_LOCAL_OAUTH_PORT = 8765
+GOOGLE_API_TIMEOUT_SECONDS = int(os.environ.get("GOOGLE_API_TIMEOUT_SECONDS", "25"))
 
 
 def _google_oauth_prompt() -> str:
@@ -161,6 +165,47 @@ def _credentials_from_payload(payload: dict):
             expiry=expiry,
         )
 
+def _credentials_need_refresh(creds: Credentials | None) -> bool:
+    if not creds or not creds.refresh_token:
+        return False
+    return bool(creds.expired or not creds.expiry)
+
+def _refresh_google_credentials_if_possible(user_id: str, creds: Credentials | None) -> Credentials | None:
+    if _credentials_need_refresh(creds):
+        creds.refresh(Request())
+        _persist_google_credentials(user_id, creds)
+    return creds
+
+def _authorized_google_http(creds: Credentials):
+    return AuthorizedHttp(creds, http=httplib2.Http(timeout=GOOGLE_API_TIMEOUT_SECONDS))
+
+def _build_google_service(service_name: str, version: str, creds: Credentials):
+    return build(
+        service_name,
+        version,
+        http=_authorized_google_http(creds),
+        cache_discovery=False,
+    )
+
+def _google_api_failure_response(exc: Exception) -> dict:
+    if isinstance(exc, HttpError):
+        status = getattr(exc.resp, "status", None)
+        if status in {401, 403}:
+            return {
+                "status": "auth_required",
+                "message": (
+                    "Google saves is connected, but Google rejected the Docs permission. "
+                    "Reconnect Google saves from the account menu and approve Docs, Drive, Calendar, and Tasks."
+                ),
+            }
+        return {"status": "error", "message": f"Google API error {status}: {exc}"}
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return {
+            "status": "timeout",
+            "message": "Google Docs took too long to respond. Please try again in a moment.",
+        }
+    return {"status": "error", "message": str(exc) or exc.__class__.__name__}
+
 def _load_google_credentials_from_disk(user_id: str):
     path = _user_google_token_path(user_id)
     if path.is_file():
@@ -246,9 +291,8 @@ def google_oauth_status(user_id: str) -> dict:
                 payload = doc.to_dict() or {}
                 try:
                     creds = _credentials_from_payload(payload)
-                    if creds and creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                        _persist_google_credentials(normalized_user_id, creds)
+                    if _credentials_need_refresh(creds):
+                        _refresh_google_credentials_if_possible(normalized_user_id, creds)
                         has_credentials = True
                     else:
                         # Access-token-only Firebase grants are usable only when they
@@ -269,6 +313,8 @@ def google_oauth_status(user_id: str) -> dict:
             if token_path.is_file():
                 payload = json.loads(token_path.read_text(encoding="utf-8"))
             creds = _credentials_from_payload(payload) if payload else None
+            if _credentials_need_refresh(creds):
+                _refresh_google_credentials_if_possible(normalized_user_id, creds)
             has_credentials = bool(
                 creds
                 and creds.valid
@@ -377,9 +423,7 @@ def get_google_credentials(user_id):
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
-                creds.refresh(Request())
-                _persist_google_credentials(normalized_user_id, creds)
-                return creds
+                return _refresh_google_credentials_if_possible(normalized_user_id, creds)
             except Exception:
                 pass
 
@@ -412,6 +456,18 @@ def get_google_credentials(user_id):
                 "For security, ArkAI only connects saves after the currently signed-in account grants permission."
             ),
         }
+
+    if _credentials_need_refresh(creds):
+        try:
+            return _refresh_google_credentials_if_possible(normalized_user_id, creds)
+        except Exception:
+            return {
+                "status": "auth_required",
+                "message": (
+                    "Google saves is connected, but the saved authorization could not be refreshed. "
+                    "Reconnect Google saves from the ArkAI account menu and approve Docs, Drive, Calendar, and Tasks."
+                ),
+            }
 
     return creds
 
@@ -630,110 +686,113 @@ def save_google_doc_note(user_id: str, title: str, note_text: str, code_snippet:
     creds = get_google_credentials(user_id)
     if isinstance(creds, dict):
         return creds
-    docs_service = build('docs', 'v1', credentials=creds)
-    drive_service = build('drive', 'v3', credentials=creds)
-    
-    # 1. Ensure folder exists
-    folder_id = get_drive_folder_id(drive_service)
-    
-    # 2. Create document & move it
-    doc = docs_service.documents().create(body={'title': title}).execute()
-    document_id = doc.get('documentId')
-    
-    drive_file = drive_service.files().get(fileId=document_id, fields='parents').execute()
-    previous_parents = ",".join(drive_file.get('parents', []))
-    drive_service.files().update(
-        fileId=document_id,
-        addParents=folder_id,
-        removeParents=previous_parents,
-        fields='id, parents'
-    ).execute()
-    
-    # 3. Format requests
-    requests = []
-    full_text = note_text + "\n\n"
-    current_index = 1
-    
-    requests.append({
-        'insertText': {
-            'location': {'index': current_index},
-            'text': full_text
-        }
-    })
-    current_index += len(full_text)
-    
-    if code_snippet:
-        try:
-            if language:
-                lexer = get_lexer_by_name(language)
-            else:
-                lexer = guess_lexer(code_snippet)
-        except:
-            lexer = get_lexer_by_name('text')
-            
-        code_tokens = list(lex(code_snippet, lexer))
-        
-        code_start_index = current_index
-        code_str = ""
-        for ttype, value in code_tokens:
-            code_str += value
-            
+    try:
+        docs_service = _build_google_service('docs', 'v1', creds)
+        drive_service = _build_google_service('drive', 'v3', creds)
+
+        # 1. Ensure folder exists
+        folder_id = get_drive_folder_id(drive_service)
+
+        # 2. Create document & move it
+        doc = docs_service.documents().create(body={'title': title}).execute()
+        document_id = doc.get('documentId')
+
+        drive_file = drive_service.files().get(fileId=document_id, fields='parents').execute()
+        previous_parents = ",".join(drive_file.get('parents', []))
+        drive_service.files().update(
+            fileId=document_id,
+            addParents=folder_id,
+            removeParents=previous_parents,
+            fields='id, parents'
+        ).execute()
+
+        # 3. Format requests
+        requests = []
+        full_text = note_text + "\n\n"
+        current_index = 1
+
         requests.append({
             'insertText': {
                 'location': {'index': current_index},
-                'text': code_str + "\n"
+                'text': full_text
             }
         })
-        
-        requests.append({
-            'updateParagraphStyle': {
-                'range': {
-                    'startIndex': code_start_index,
-                    'endIndex': code_start_index + len(code_str)
-                },
-                'paragraphStyle': {
-                    'shading': {
-                        'backgroundColor': {
-                            'color': {'rgbColor': {'red': 0.95, 'green': 0.95, 'blue': 0.95}}
-                        }
-                    }
-                },
-                'fields': 'shading'
-            }
-        })
-        
-        idx = code_start_index
-        for ttype, value in code_tokens:
-            val_len = len(value)
-            if val_len == 0:
-                continue
-                
-            color = pygments_token_to_docs_color(ttype)
+        current_index += len(full_text)
+
+        if code_snippet:
+            try:
+                if language:
+                    lexer = get_lexer_by_name(language)
+                else:
+                    lexer = guess_lexer(code_snippet)
+            except:
+                lexer = get_lexer_by_name('text')
+
+            code_tokens = list(lex(code_snippet, lexer))
+
+            code_start_index = current_index
+            code_str = ""
+            for ttype, value in code_tokens:
+                code_str += value
+
             requests.append({
-                'updateTextStyle': {
-                    'range': {
-                        'startIndex': idx,
-                        'endIndex': idx + val_len
-                    },
-                    'textStyle': {
-                        'foregroundColor': color,
-                        'weightedFontFamily': {
-                            'fontFamily': 'Consolas'
-                        }
-                    },
-                    'fields': 'foregroundColor, weightedFontFamily'
+                'insertText': {
+                    'location': {'index': current_index},
+                    'text': code_str + "\n"
                 }
             })
-            idx += val_len
-            
-    if requests:
-        docs_service.documents().batchUpdate(documentId=document_id, body={'requests': requests}).execute()
-        
-    return {
-        "status": "success",
-        "message": f"Note saved to Google Docs in folder 'Adaptive Learning Assistant Notes'",
-        "doc_id": document_id
-    }
+
+            requests.append({
+                'updateParagraphStyle': {
+                    'range': {
+                        'startIndex': code_start_index,
+                        'endIndex': code_start_index + len(code_str)
+                    },
+                    'paragraphStyle': {
+                        'shading': {
+                            'backgroundColor': {
+                                'color': {'rgbColor': {'red': 0.95, 'green': 0.95, 'blue': 0.95}}
+                            }
+                        }
+                    },
+                    'fields': 'shading'
+                }
+            })
+
+            idx = code_start_index
+            for ttype, value in code_tokens:
+                val_len = len(value)
+                if val_len == 0:
+                    continue
+
+                color = pygments_token_to_docs_color(ttype)
+                requests.append({
+                    'updateTextStyle': {
+                        'range': {
+                            'startIndex': idx,
+                            'endIndex': idx + val_len
+                        },
+                        'textStyle': {
+                            'foregroundColor': color,
+                            'weightedFontFamily': {
+                                'fontFamily': 'Consolas'
+                            }
+                        },
+                        'fields': 'foregroundColor, weightedFontFamily'
+                    }
+                })
+                idx += val_len
+
+        if requests:
+            docs_service.documents().batchUpdate(documentId=document_id, body={'requests': requests}).execute()
+
+        return {
+            "status": "success",
+            "message": f"Note saved to Google Docs in folder 'Adaptive Learning Assistant Notes'",
+            "doc_id": document_id
+        }
+    except Exception as exc:
+        return _google_api_failure_response(exc)
 
 @mcp.tool()
 def save_text_file_to_drive(user_id: str, title: str, content: str) -> dict:
